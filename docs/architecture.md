@@ -33,21 +33,25 @@ The planned VM network uses NAT for internet access and Host-Only networking wit
 
 ## Banking Application and Database
 
-FastAPI uses synchronous endpoints. SQLAlchemy ORM 2.x provides synchronous sessions and connection pooling, while Alembic manages schema migrations. The database schema contains `accounts`, `requests`, and `transactions`, including a transaction ledger.
+FastAPI uses synchronous endpoints. SQLAlchemy ORM 2.x provides synchronous sessions and connection pooling, while Alembic manages schema migrations. The database schema contains exactly two application tables: `accounts` and `requests`. There is no separate transactions table; successful financial-operation records in `requests` provide the transaction history.
+
+Accounts have a database-generated ID, name, balance, status, creation timestamp, and optional closure timestamp. Names are not unique and cannot be edited. Account creation and soft deletion are supported; closure requires a zero balance, and closed accounts reject subsequent banking operations.
 
 Monetary values use PostgreSQL `BIGINT`. Transaction amounts must be positive integers, while account balances must be non-negative. Floating-point monetary storage is not used.
 
-READ COMMITTED isolation, atomic conditional SQL updates, and row-level locking prevent lost updates. A balance modification, idempotency record, and ledger insertion must be committed atomically.
+READ COMMITTED isolation, atomic conditional SQL updates, and row-level locking prevent lost updates. A balance modification and its durable request/result record must be committed atomically.
 
 These mechanisms support ACID behavior for the supported single-account operations, but do not claim general serializable isolation; ORM use alone does not establish ACID correctness.
 
-Each mutating request has a stable UUID request ID. PostgreSQL atomically stores the operation and result, detects reuse with a different payload, and retains idempotency records permanently; Redis is not used.
+Account creation, account closure, deposit, and withdrawal each use a stable UUID request ID. PostgreSQL atomically stores the operation and result, uses a SHA-256 payload hash to detect reuse with a different payload, and retains request records permanently; Redis is not used.
 
-Migrations are one-shot and run only against the Primary. Initial account seeding is also one-shot and must never reset balances after restart or failover.
+Migrations are one-shot and run only against the Primary. Account IDs are database-generated and are not intentionally reused.
 
 The intended REST interface is:
 
+- `POST /accounts`
 - `GET /accounts/{account_id}/balance`
+- `POST /accounts/{account_id}/close`
 - `POST /accounts/{account_id}/deposit`
 - `POST /accounts/{account_id}/withdraw`
 - `GET /requests/{request_id}`
