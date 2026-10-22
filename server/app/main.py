@@ -16,12 +16,15 @@ from server.app.database import (
     session_scope,
 )
 from server.app.dependencies import get_session_factory
+from server.app.logging_config import configure_logging
+from server.app.middleware import RequestLoggingMiddleware
 
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     """Create and dispose application-owned database resources."""
     settings = Settings.from_environment()
+    configure_logging(settings.log_level)
     engine = create_database_engine(settings)
     application.state.session_factory = create_session_factory(engine)
     try:
@@ -33,6 +36,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(RequestLoggingMiddleware)
 
 
 @app.get("/ready")

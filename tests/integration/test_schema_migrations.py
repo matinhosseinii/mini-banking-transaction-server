@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
+import textwrap
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -22,6 +25,50 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = REPOSITORY_ROOT / "server" / "alembic.ini"
 PAYLOAD_HASH = "a" * 64
 BIGINT_MAX = 2**63 - 1
+
+
+def test_offline_alembic_execution_preserves_application_loggers() -> None:
+    """Alembic must not disable loggers configured before migration startup."""
+    script = textwrap.dedent(
+        f"""
+        import io
+        import logging
+
+        from alembic import command
+        from alembic.config import Config
+
+        records = []
+
+        class RecordingHandler(logging.Handler):
+            def emit(self, record):
+                records.append(record.getMessage())
+
+        logger = logging.getLogger("server.app.http")
+        logger.handlers = [RecordingHandler()]
+        logger.propagate = False
+        logger.setLevel(logging.INFO)
+
+        config = Config({str(ALEMBIC_INI)!r}, output_buffer=io.StringIO())
+        config.attributes["database_url"] = (
+            "postgresql+psycopg://unused:unused@127.0.0.1/unused"
+        )
+        command.upgrade(config, "head", sql=True)
+
+        assert logger.disabled is False
+        logger.info("application logger remains active")
+        assert records == ["application logger remains active"]
+        """
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=REPOSITORY_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 @contextmanager

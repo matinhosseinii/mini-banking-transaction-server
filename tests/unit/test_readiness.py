@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from contextlib import contextmanager
 from typing import Self
+from uuid import UUID
 
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import OperationalError
@@ -56,6 +58,7 @@ def _configure_lifespan(monkeypatch, is_in_recovery: bool = False):
         ),
     )
     monkeypatch.setattr(main, "create_database_engine", lambda settings: engine)
+    monkeypatch.setattr(main, "configure_logging", lambda log_level: None)
     monkeypatch.setattr(
         main, "create_session_factory", lambda created_engine: session_factory
     )
@@ -74,6 +77,7 @@ def test_ready_when_database_is_writable_primary(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ready"}
+    assert UUID(response.headers["X-Request-ID"]).version == 4
 
 
 def test_ready_is_unavailable_when_database_is_in_recovery(monkeypatch) -> None:
@@ -91,6 +95,43 @@ def test_ready_is_unavailable_when_database_is_in_recovery(monkeypatch) -> None:
         "status": 503,
         "detail": "Database is not ready.",
     }
+    assert UUID(response.headers["X-Request-ID"]).version == 4
+
+
+def test_successful_ready_suppresses_completion_log(monkeypatch, caplog) -> None:
+    _configure_lifespan(monkeypatch)
+
+    with (
+        caplog.at_level(logging.INFO, logger="server.app.http"),
+        TestClient(app) as client,
+    ):
+        response = client.get("/ready")
+
+    assert response.status_code == 200
+    assert not any(
+        getattr(record, "event", None) == "http_request_completed"
+        for record in caplog.records
+    )
+
+
+def test_failed_ready_logs_error_completion(monkeypatch, caplog) -> None:
+    _configure_lifespan(monkeypatch, is_in_recovery=True)
+
+    with (
+        caplog.at_level(logging.INFO, logger="server.app.http"),
+        TestClient(app) as client,
+    ):
+        response = client.get("/ready")
+
+    completion = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "http_request_completed"
+    ]
+    assert response.status_code == 503
+    assert len(completion) == 1
+    assert completion[0].levelno == logging.ERROR
+    assert completion[0].correlation_id == response.headers["X-Request-ID"]
 
 
 def test_ready_is_unavailable_when_database_connection_fails(monkeypatch) -> None:

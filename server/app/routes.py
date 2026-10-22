@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Path, Query, status
+from fastapi import APIRouter, Depends, Header, Path, Query, Request, status
 from sqlalchemy.orm import Session, sessionmaker
 
 from server.app import banking, idempotency
@@ -58,7 +58,14 @@ def _public_result(result: idempotency.RequestResult) -> dict[str, object]:
     }
 
 
-def _mutation_response(outcome: CoordinatedResult) -> MutationResponse | object:
+def _mutation_response(
+    request: Request, outcome: CoordinatedResult
+) -> MutationResponse | object:
+    request.state.operation = outcome.result.operation.value
+    request.state.business_status = outcome.result.status.value
+    request.state.replayed = outcome.replayed
+    if outcome.result.error_code is not None:
+        request.state.error_code = outcome.result.error_code.value
     if outcome.result.status is OperationStatus.REJECTED:
         return business_problem(outcome)
     return MutationResponse(**_public_result(outcome.result), replayed=outcome.replayed)
@@ -71,12 +78,14 @@ def _mutation_response(outcome: CoordinatedResult) -> MutationResponse | object:
     responses=PROBLEM_RESPONSES,
 )
 def create_account(
+    request: Request,
     body: CreateAccountRequest,
     request_id: IdempotencyKey,
     session_factory: SessionFactory,
 ) -> MutationResponse | object:
     return _mutation_response(
-        idempotency.coordinate_create_account(session_factory, request_id, body.name)
+        request,
+        idempotency.coordinate_create_account(session_factory, request_id, body.name),
     )
 
 
@@ -86,12 +95,14 @@ def create_account(
     responses=PROBLEM_RESPONSES,
 )
 def close_account(
+    request: Request,
     account_id: PositivePathId,
     request_id: IdempotencyKey,
     session_factory: SessionFactory,
 ) -> MutationResponse | object:
     return _mutation_response(
-        idempotency.coordinate_close_account(session_factory, request_id, account_id)
+        request,
+        idempotency.coordinate_close_account(session_factory, request_id, account_id),
     )
 
 
@@ -128,15 +139,17 @@ def get_balance(
     responses=PROBLEM_RESPONSES,
 )
 def deposit(
+    request: Request,
     account_id: PositivePathId,
     body: AmountRequest,
     request_id: IdempotencyKey,
     session_factory: SessionFactory,
 ) -> MutationResponse | object:
     return _mutation_response(
+        request,
         idempotency.coordinate_deposit(
             session_factory, request_id, account_id, body.amount
-        )
+        ),
     )
 
 
@@ -146,15 +159,17 @@ def deposit(
     responses=PROBLEM_RESPONSES,
 )
 def withdraw(
+    request: Request,
     account_id: PositivePathId,
     body: AmountRequest,
     request_id: IdempotencyKey,
     session_factory: SessionFactory,
 ) -> MutationResponse | object:
     return _mutation_response(
+        request,
         idempotency.coordinate_withdraw(
             session_factory, request_id, account_id, body.amount
-        )
+        ),
     )
 
 

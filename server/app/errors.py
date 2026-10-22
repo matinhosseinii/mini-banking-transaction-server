@@ -87,7 +87,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def validation_handler(
         request: Request, error: RequestValidationError
     ) -> JSONResponse:
-        del request
+        request.state.log_classification = "validation_error"
         errors = [
             {
                 "loc": list(item["loc"]),
@@ -102,14 +102,14 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def banking_validation_handler(
         request: Request, error: BankingValidationError
     ) -> JSONResponse:
-        del request
+        request.state.log_classification = "validation_error"
         return problem_response(422, str(error))
 
     @app.exception_handler(IdempotencyConflict)
     async def idempotency_conflict_handler(
         request: Request, error: IdempotencyConflict
     ) -> JSONResponse:
-        del request
+        request.state.log_classification = "idempotency_conflict"
         return problem_response(
             409,
             "The Idempotency-Key was already used for a different request.",
@@ -121,7 +121,9 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def http_exception_handler(
         request: Request, error: HTTPException
     ) -> JSONResponse:
-        del request
+        request.state.log_classification = (
+            "infrastructure_error" if error.status_code >= 500 else "client_error"
+        )
         detail = error.detail if isinstance(error.detail, str) else "Request failed."
         return problem_response(error.status_code, detail, headers=error.headers)
 
@@ -129,16 +131,31 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def sqlalchemy_handler(
         request: Request, error: SQLAlchemyError
     ) -> JSONResponse:
-        del request
-        logger.exception("Database operation failed")
-        if _is_temporary_database_error(error):
+        temporary = _is_temporary_database_error(error)
+        request.state.log_classification = (
+            "infrastructure_error" if temporary else "internal_error"
+        )
+        logger.error(
+            "Database operation failed",
+            extra={
+                "event": "database_operation_failed",
+                "exception_type": type(error).__name__,
+            },
+        )
+        if temporary:
             return problem_response(503, "Database is temporarily unavailable.")
         return problem_response(500, "An unexpected internal failure occurred.")
 
     @app.exception_handler(Exception)
     async def unexpected_handler(request: Request, error: Exception) -> JSONResponse:
-        del request
-        logger.exception("Unexpected HTTP request failure", exc_info=error)
+        request.state.log_classification = "internal_error"
+        logger.error(
+            "Unexpected HTTP request failure",
+            extra={
+                "event": "unexpected_internal_failure",
+                "exception_type": type(error).__name__,
+            },
+        )
         return problem_response(500, "An unexpected internal failure occurred.")
 
 
