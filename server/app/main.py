@@ -4,7 +4,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
@@ -15,6 +15,7 @@ from server.app.database import (
     create_session_factory,
     session_scope,
 )
+from server.app.dependencies import get_session_factory
 
 
 @asynccontextmanager
@@ -32,17 +33,6 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(lifespan=lifespan)
-
-
-def get_session_factory(request: Request) -> sessionmaker[Session]:
-    """Get the session factory created for this application lifespan."""
-    try:
-        return request.app.state.session_factory
-    except AttributeError:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database is not ready.",
-        ) from None
 
 
 @app.get("/ready")
@@ -73,3 +63,10 @@ def readiness(
         )
 
     return {"status": "ready"}
+
+
+from server.app.errors import register_exception_handlers
+from server.app.routes import router
+
+app.include_router(router)
+register_exception_handlers(app)

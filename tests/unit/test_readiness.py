@@ -84,7 +84,13 @@ def test_ready_is_unavailable_when_database_is_in_recovery(monkeypatch) -> None:
         response = client.get("/ready")
 
     assert response.status_code == 503
-    assert response.json() == {"detail": "Database is not ready."}
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json() == {
+        "type": "about:blank",
+        "title": "Service Unavailable",
+        "status": 503,
+        "detail": "Database is not ready.",
+    }
 
 
 def test_ready_is_unavailable_when_database_connection_fails(monkeypatch) -> None:
@@ -101,7 +107,13 @@ def test_ready_is_unavailable_when_database_connection_fails(monkeypatch) -> Non
         response = client.get("/ready")
 
     assert response.status_code == 503
-    assert response.json() == {"detail": "Database is not ready."}
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json() == {
+        "type": "about:blank",
+        "title": "Service Unavailable",
+        "status": 503,
+        "detail": "Database is not ready.",
+    }
 
 
 def test_ready_is_unavailable_when_database_resources_are_missing(monkeypatch) -> None:
@@ -112,7 +124,13 @@ def test_ready_is_unavailable_when_database_resources_are_missing(monkeypatch) -
         response = client.get("/ready")
 
     assert response.status_code == 503
-    assert response.json() == {"detail": "Database is not ready."}
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json() == {
+        "type": "about:blank",
+        "title": "Service Unavailable",
+        "status": 503,
+        "detail": "Database is not ready.",
+    }
 
 
 def test_lifespan_creates_one_engine_and_reuses_one_session_factory(
