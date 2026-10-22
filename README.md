@@ -33,3 +33,8 @@ Setup and execution instructions will be added in later development tasks.
 
 See the [Command-Only Banking CLI guide](docs/client-cli.md) for installation,
 configuration, command reference, retry behavior, and UNKNOWN recovery.
+
+## Concurrent Request Generator
+
+See the [Concurrent Request Generator guide](docs/load-generator.md) for
+bounded concurrent balance, deposit, withdrawal, and mixed-operation runs.
