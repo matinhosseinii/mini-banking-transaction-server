@@ -1,0 +1,16 @@
+{
+  "default_service": "standalone",
+  "services": {
+    "standalone": {"base_url": "http://server-a.example:8000"},
+    "ha": {"base_url": "http://witness-haproxy.example:PORT"}
+  },
+  "pending_dir": "~/.mini-banking/pending",
+  "timeouts": {"connect": 3, "read": 15, "write": 5, "pool": 3},
+  "retry": {
+    "max_attempts": 3,
+    "deadline_seconds": 90,
+    "lookup_timeout_seconds": 10,
+    "backoff_seconds": [5, 15],
+    "jitter_seconds": 1
+  }
+}

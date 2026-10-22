@@ -28,3 +28,8 @@ Advanced Bonus work will add primary/backup clustering, PostgreSQL replication, 
 Initial development foundation only. No application functionality has been implemented or tested yet.
 
 Setup and execution instructions will be added in later development tasks.
+
+## Client CLI
+
+See the [Command-Only Banking CLI guide](docs/client-cli.md) for installation,
+configuration, command reference, retry behavior, and UNKNOWN recovery.
