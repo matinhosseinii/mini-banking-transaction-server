@@ -16,6 +16,8 @@ COPY server/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY --chown=app:app server/app /app/server/app
+COPY --chown=app:app server/alembic.ini /app/server/alembic.ini
+COPY --chown=app:app server/migrations /app/server/migrations
 
 USER app
 

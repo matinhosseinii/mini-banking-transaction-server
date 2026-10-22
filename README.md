@@ -38,3 +38,9 @@ configuration, command reference, retry behavior, and UNKNOWN recovery.
 
 See the [Concurrent Request Generator guide](docs/load-generator.md) for
 bounded concurrent balance, deposit, withdrawal, and mixed-operation runs.
+
+## Standalone Deployment
+
+See the [Standalone Deployment guide](docs/standalone-deployment.md) for Server
+A deployment, manual migrations, optional demo data, Client VM setup, and the
+verification checklist.
