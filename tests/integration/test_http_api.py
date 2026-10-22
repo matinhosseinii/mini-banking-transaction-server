@@ -194,6 +194,42 @@ def test_history_filters_counts_and_paginates_in_sql(client) -> None:
     assert empty_page["total"] == 3
 
 
+def test_data_persists_across_application_client_and_engine_restart(
+    http_database,
+    monkeypatch,
+) -> None:
+    isolated_url = http_database.kw["bind"].url.render_as_string(hide_password=False)
+    monkeypatch.setenv("DATABASE_URL", isolated_url)
+    request_id = uuid4()
+
+    with TestClient(app, raise_server_exceptions=False) as first_client:
+        first_factory = app.state.session_factory
+        created = _mutate(
+            first_client,
+            "POST",
+            "/accounts",
+            {"name": "Application restart persistence"},
+        )
+        account_id = created.json()["account_id"]
+        deposited = _mutate(
+            first_client,
+            "POST",
+            f"/accounts/{account_id}/deposit",
+            {"amount": 123},
+            request_id,
+        )
+        assert deposited.status_code == 200
+
+    with TestClient(app, raise_server_exceptions=False) as second_client:
+        assert app.state.session_factory is not first_factory
+        balance = second_client.get(f"/accounts/{account_id}/balance")
+        lookup = second_client.get(f"/requests/{request_id}")
+
+    assert balance.json()["balance"] == 123
+    assert lookup.status_code == 200
+    assert lookup.json()["status"] == "SUCCEEDED"
+
+
 @pytest.mark.parametrize(
     "params",
     [

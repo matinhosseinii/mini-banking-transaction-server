@@ -141,6 +141,51 @@ def test_business_rejection_is_replayable_problem(client, monkeypatch) -> None:
     assert response.json()["replayed"] is True
 
 
+def test_insufficient_funds_is_meaningful_problem(client, monkeypatch) -> None:
+    outcome = _outcome(
+        operation=Operation.WITHDRAW,
+        status=OperationStatus.REJECTED,
+        error_code=BusinessErrorCode.INSUFFICIENT_FUNDS,
+    )
+    monkeypatch.setattr(
+        "server.app.routes.idempotency.coordinate_withdraw",
+        lambda *args: outcome,
+    )
+
+    response = client.post(
+        "/accounts/7/withdraw",
+        json={"amount": 10},
+        headers={"Idempotency-Key": str(outcome.result.request_id)},
+    )
+
+    assert response.status_code == 409
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["error_code"] == "INSUFFICIENT_FUNDS"
+    assert response.json()["detail"] == "Insufficient funds."
+
+
+@pytest.mark.parametrize(
+    ("content", "content_type"),
+    [(b"{}", "application/json"), (b'{"amount":', "application/json")],
+)
+def test_missing_fields_and_malformed_json_are_validation_problems(
+    client, content, content_type
+) -> None:
+    response = client.post(
+        "/accounts/7/deposit",
+        content=content,
+        headers={
+            "Content-Type": content_type,
+            "Idempotency-Key": str(uuid4()),
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["detail"] == "Request validation failed."
+    assert response.json()["errors"]
+
+
 @pytest.mark.parametrize(
     ("error", "expected_status"),
     [

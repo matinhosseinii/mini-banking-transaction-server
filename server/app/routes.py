@@ -64,6 +64,11 @@ def _mutation_response(
     request.state.operation = outcome.result.operation.value
     request.state.business_status = outcome.result.status.value
     request.state.replayed = outcome.replayed
+    request.state.account_id = (
+        outcome.result.account_id
+        if outcome.result.account_id is not None
+        else outcome.result.requested_account_id
+    )
     if outcome.result.error_code is not None:
         request.state.error_code = outcome.result.error_code.value
     if outcome.result.status is OperationStatus.REJECTED:
@@ -112,9 +117,11 @@ def close_account(
     responses=PROBLEM_RESPONSES,
 )
 def get_balance(
+    request: Request,
     account_id: PositivePathId,
     session_factory: SessionFactory,
 ) -> BalanceResponse | object:
+    request.state.account_id = account_id
     with session_factory() as session:
         result = banking.get_balance(session, account_id)
     if result.error_code is not None:
@@ -179,12 +186,18 @@ def withdraw(
     responses=PROBLEM_RESPONSES,
 )
 def get_request(
+    request: Request,
     request_id: UUID,
     session_factory: SessionFactory,
 ) -> StoredRequestResponse | object:
     lookup = idempotency.lookup_request(session_factory, request_id)
     if not lookup.found or lookup.result is None:
         return problem_response(404, "Request not found.")
+    request.state.account_id = (
+        lookup.result.account_id
+        if lookup.result.account_id is not None
+        else lookup.result.requested_account_id
+    )
     return StoredRequestResponse(**_public_result(lookup.result))
 
 
@@ -194,6 +207,7 @@ def get_request(
     responses=PROBLEM_RESPONSES,
 )
 def get_requests(
+    request: Request,
     session_factory: SessionFactory,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -201,6 +215,7 @@ def get_requests(
     request_status: Annotated[OperationStatus | None, Query(alias="status")] = None,
     operation: Annotated[Operation | None, Query()] = None,
 ) -> RequestHistoryResponse:
+    request.state.account_id = account_id
     with session_factory() as session:
         page = list_requests(
             session,

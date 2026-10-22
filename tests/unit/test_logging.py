@@ -37,6 +37,7 @@ def client() -> TestClient:
 
 def _outcome(
     *,
+    operation: Operation = Operation.DEPOSIT,
     status: OperationStatus = OperationStatus.SUCCEEDED,
     error_code: BusinessErrorCode | None = None,
     replayed: bool = False,
@@ -44,15 +45,19 @@ def _outcome(
     return CoordinatedResult(
         result=RequestResult(
             request_id=uuid4(),
-            operation=Operation.DEPOSIT,
-            requested_account_id=7,
+            operation=operation,
+            requested_account_id=(None if operation is Operation.CREATE_ACCOUNT else 7),
             account_id=(
                 None if error_code is BusinessErrorCode.ACCOUNT_NOT_FOUND else 7
             ),
-            amount=10,
+            amount=(
+                10 if operation in {Operation.DEPOSIT, Operation.WITHDRAW} else None
+            ),
             payload_hash="a" * 64,
             status=status,
-            balance_before=None if error_code else 0,
+            balance_before=(
+                None if error_code or operation is Operation.CREATE_ACCOUNT else 0
+            ),
             balance_after=None if error_code else 10,
             error_code=error_code,
             created_at=datetime.now(UTC),
@@ -85,13 +90,28 @@ def test_json_formatter_emits_safe_common_fields_without_traceback() -> None:
             logging.ERROR,
             "ignored raw message",
             exc_info=True,
-            extra={"event": "safe_failure", "duration_ms": object()},
+            extra={
+                "event": "safe_failure",
+                "request_id": "request-1",
+                "client_ip": "192.0.2.1",
+                "action": "DEPOSIT",
+                "account_id": 7,
+                "status_code": 500,
+                "result": "INTERNAL_ERROR",
+                "duration_ms": object(),
+            },
         )
 
     document = json.loads(stream.getvalue())
     assert document["level"] == "ERROR"
     assert document["logger"] == "tests.safe_json"
     assert document["event"] == "safe_failure"
+    assert document["request_id"] == "request-1"
+    assert document["client_ip"] == "192.0.2.1"
+    assert document["action"] == "DEPOSIT"
+    assert document["account_id"] == 7
+    assert document["status_code"] == 500
+    assert document["result"] == "INTERNAL_ERROR"
     assert document["duration_ms"] == "<object>"
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T.*Z", document["timestamp"])
     assert "sensitive" not in stream.getvalue()
@@ -199,9 +219,14 @@ def test_success_completion_has_normalized_path_metadata_and_no_sensitive_data(
     assert response.status_code == 200
     assert len(records) == 1
     record = records[0]
+    assert record.request_id == response.headers["X-Request-ID"]
     assert record.correlation_id == response.headers["X-Request-ID"]
+    assert record.client_ip == "testclient"
     assert record.path == "/accounts/{account_id}/deposit"
+    assert record.action == "DEPOSIT"
+    assert record.account_id == 7
     assert record.status_code == 200
+    assert record.result == "SUCCEEDED"
     assert record.duration_ms >= 0
     assert record.idempotency_key == str(key)
     assert record.operation == "DEPOSIT"
@@ -209,6 +234,51 @@ def test_success_completion_has_normalized_path_metadata_and_no_sensitive_data(
     assert record.replayed is True
     assert not hasattr(record, "amount")
     assert "private" not in record.path
+
+
+def test_client_ip_uses_connection_scope_not_forwarded_headers(
+    client, caplog, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "server.app.routes.idempotency.coordinate_deposit",
+        lambda *args: _outcome(),
+    )
+    with caplog.at_level(logging.INFO, logger="server.app.http"):
+        client.post(
+            "/accounts/7/deposit",
+            json={"amount": 10},
+            headers={
+                "Idempotency-Key": str(uuid4()),
+                "X-Forwarded-For": "198.51.100.77",
+                "Forwarded": "for=203.0.113.8",
+            },
+        )
+
+    record = _completion_records(caplog)[0]
+    assert record.client_ip == "testclient"
+    assert "198.51.100.77" not in caplog.text
+    assert "203.0.113.8" not in caplog.text
+
+
+def test_account_creation_logs_created_account_id(client, caplog, monkeypatch) -> None:
+    outcome = _outcome(operation=Operation.CREATE_ACCOUNT)
+    monkeypatch.setattr(
+        "server.app.routes.idempotency.coordinate_create_account",
+        lambda *args: outcome,
+    )
+
+    with caplog.at_level(logging.INFO, logger="server.app.http"):
+        response = client.post(
+            "/accounts",
+            json={"name": "Created"},
+            headers={"Idempotency-Key": str(outcome.result.request_id)},
+        )
+
+    record = _completion_records(caplog)[0]
+    assert response.status_code == 201
+    assert record.action == "CREATE_ACCOUNT"
+    assert record.account_id == 7
+    assert record.result == "SUCCEEDED"
 
 
 def test_synchronous_endpoint_logging_retains_correlation_context(
@@ -287,6 +357,9 @@ def test_validation_warning_omits_malformed_idempotency_value(client, caplog) ->
     record = _completion_records(caplog)[0]
     assert response.status_code == 422
     assert record.levelno == logging.WARNING
+    assert record.action == "DEPOSIT"
+    assert record.account_id == 7
+    assert record.result == "VALIDATION_ERROR"
     assert not hasattr(record, "idempotency_key")
     assert malformed not in caplog.text
 

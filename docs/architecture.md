@@ -63,7 +63,14 @@ The intended REST interface is:
 
 Errors use RFC 9457 Problem Details with `application/problem+json`.
 
-Structured JSON logging records requests and their corresponding responses, including request ID, client IP, action, account ID, timestamp, result, and latency.
+HTTP requests produce one structured completion log, except successful
+`GET /ready` checks, which are omitted to avoid noise from periodic Docker
+health checks. Failed readiness checks remain logged at ERROR. The
+server-generated `request_id` is the same UUIDv4 as `correlation_id` and the
+`X-Request-ID` response header. Logs include the ASGI peer `client_ip` (not
+forwarded headers), normalized action and route, account ID when available,
+timestamp, result, HTTP status, and monotonic-clock latency. Mutation logs
+retain the separate client-supplied `idempotency_key` and business metadata.
 
 ## High Availability and Fault Tolerance
 

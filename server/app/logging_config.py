@@ -18,11 +18,16 @@ correlation_id_context: ContextVar[str | None] = ContextVar(
 
 _STRUCTURED_FIELDS = (
     "event",
+    "request_id",
     "correlation_id",
     "idempotency_key",
+    "client_ip",
     "method",
     "path",
+    "action",
+    "account_id",
     "status_code",
+    "result",
     "duration_ms",
     "operation",
     "business_status",
