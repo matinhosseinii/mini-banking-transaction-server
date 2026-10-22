@@ -60,6 +60,7 @@ class BankingHttpClient:
         self.jitter = jitter
         self.client = httpx.Client(
             base_url=base_url,
+            follow_redirects=False,
             timeout=httpx.Timeout(
                 connect=timeouts.connect,
                 read=timeouts.read,
@@ -126,6 +127,8 @@ class BankingHttpClient:
                 continue
             if response.status_code in {502, 503, 504}:
                 continue
+            if 300 <= response.status_code < 400:
+                return self.lookup_pending(pending)
             if 500 <= response.status_code < 600:
                 return self.lookup_pending(pending)
             if 200 <= response.status_code < 300:

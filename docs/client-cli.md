@@ -270,7 +270,10 @@ Pending files are stored by default under:
 ~/.mini-banking/pending/<service-profile>/<request-id>.json
 ```
 
-Directories use mode 0700 and files use mode 0600. Writes use flush, `fsync`, and atomic replacement. One OS-level lock prevents concurrent CLI processes from manipulating the store.
+Directories use mode 0700 and files use mode 0600. Initial creation uses a
+fully written and `fsync`-ed temporary file plus `os.link()` for atomic,
+no-overwrite publication. One OS-level lock prevents concurrent CLI processes
+from manipulating the store.
 
 Inspect and recover unresolved work with:
 

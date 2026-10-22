@@ -353,6 +353,77 @@ def test_http_501_with_missing_lookup_remains_unknown() -> None:
     assert methods == ["POST", "GET"]
 
 
+def test_http_307_is_not_followed_and_valid_lookup_resolves() -> None:
+    pending = _pending()
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path))
+        if request.method == "POST":
+            return httpx.Response(307, headers={"Location": "/redirect-target"})
+        return _response(200, _outcome(pending))
+
+    with BankingHttpClient(
+        "http://service.test",
+        Timeouts(),
+        RetryPolicy(),
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        result = client.mutate(pending, lambda message: None)
+
+    assert result.kind is ResultKind.SUCCESS
+    assert requests == [
+        ("POST", pending.path),
+        ("GET", f"/requests/{pending.request_id}"),
+    ]
+
+
+def test_http_307_unknown_lookup_keeps_cli_pending_record(
+    tmp_path, monkeypatch
+) -> None:
+    config = _config(tmp_path)
+    request_id = uuid4()
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path))
+        if request.method == "POST":
+            return httpx.Response(307, headers={"Location": "/redirect-target"})
+        return _response(404, {"detail": "Request not found."})
+
+    def client_factory(base_url, timeouts, retry):
+        return BankingHttpClient(
+            base_url,
+            timeouts,
+            retry,
+            transport=httpx.MockTransport(handler),
+        )
+
+    monkeypatch.setattr(cli, "load_config", lambda path: config)
+    monkeypatch.setattr(cli, "BankingHttpClient", client_factory)
+
+    code = cli.main(
+        [
+            "deposit",
+            "--account-id",
+            "7",
+            "--amount",
+            "10",
+            "--request-id",
+            str(request_id),
+        ]
+    )
+
+    assert code == cli.ExitCode.UNKNOWN
+    pending = PendingStore(config.pending_dir).get(request_id)
+    assert pending is not None
+    assert pending.payload == {"amount": 10}
+    assert requests == [
+        ("POST", "/accounts/7/deposit"),
+        ("GET", f"/requests/{request_id}"),
+    ]
+
+
 @pytest.mark.parametrize(
     "mutation_response",
     [
