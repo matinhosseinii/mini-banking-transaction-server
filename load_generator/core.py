@@ -203,7 +203,12 @@ async def _execute_operation(
         balance, error = await _read_balance(client, account_id)
         if error is not None:
             return OperationResult(
-                index, error.operation, error.outcome, None, error.status_code, error.detail
+                index,
+                error.operation,
+                error.outcome,
+                None,
+                error.status_code,
+                error.detail,
             )
         assert balance is not None
         return OperationResult(
@@ -212,7 +217,8 @@ async def _execute_operation(
 
     assert amount is not None
     operation = (
-        "DEPOSIT" if scenario == "deposit" or scenario == "mixed" and index % 2 == 0
+        "DEPOSIT"
+        if scenario == "deposit" or scenario == "mixed" and index % 2 == 0
         else "WITHDRAW"
     )
     request_id = uuid4()
@@ -299,8 +305,7 @@ async def run_generator(
             deposits = sum(
                 amount or 0
                 for result in completed
-                if result.outcome is Outcome.SUCCEEDED
-                and result.operation == "DEPOSIT"
+                if result.outcome is Outcome.SUCCEEDED and result.operation == "DEPOSIT"
             )
             withdrawals = sum(
                 amount or 0

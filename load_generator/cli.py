@@ -82,7 +82,9 @@ def format_human(result: RunResult) -> str:
             ]
         )
     if result.unknown:
-        ids = [item.request_id for item in result.operations if item.outcome == "UNKNOWN"]
+        ids = [
+            item.request_id for item in result.operations if item.outcome == "UNKNOWN"
+        ]
         lines.extend(["", "Unknown Request IDs:", *(f"  {item}" for item in ids)])
     return "\n".join(lines)
 

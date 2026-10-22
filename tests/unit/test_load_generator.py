@@ -112,7 +112,9 @@ def test_cli_preserves_selected_service_profile_and_config_path(tmp_path) -> Non
         ("mixed", ["DEPOSIT", "WITHDRAW", "DEPOSIT", "WITHDRAW"]),
     ],
 )
-def test_all_scenarios_execute_exact_logical_operation_count(scenario, expected) -> None:
+def test_all_scenarios_execute_exact_logical_operation_count(
+    scenario, expected
+) -> None:
     balance_reads = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -202,9 +204,15 @@ def test_business_rejection_is_confirmed_but_503_is_unknown() -> None:
 
 @pytest.mark.parametrize(
     ("final_balance", "unknown", "expected_consistency"),
-    [(120, False, Consistency.PASS), (119, False, Consistency.FAIL), (120, True, Consistency.INCONCLUSIVE)],
+    [
+        (120, False, Consistency.PASS),
+        (119, False, Consistency.FAIL),
+        (120, True, Consistency.INCONCLUSIVE),
+    ],
 )
-def test_expected_balance_and_consistency(final_balance, unknown, expected_consistency) -> None:
+def test_expected_balance_and_consistency(
+    final_balance, unknown, expected_consistency
+) -> None:
     reads = iter([100, final_balance])
     mutation_number = 0
 
@@ -238,7 +246,11 @@ def test_human_and_json_results_include_equivalent_counts() -> None:
 
 @pytest.mark.parametrize(
     ("environment", "expected"),
-    [({}, None), ({"UVICORN_LIMIT_CONCURRENCY": ""}, None), ({"UVICORN_LIMIT_CONCURRENCY": "100"}, 100)],
+    [
+        ({}, None),
+        ({"UVICORN_LIMIT_CONCURRENCY": ""}, None),
+        ({"UVICORN_LIMIT_CONCURRENCY": "100"}, 100),
+    ],
 )
 def test_uvicorn_concurrency_limit(environment, expected) -> None:
     assert concurrency_limit(environment) == expected
