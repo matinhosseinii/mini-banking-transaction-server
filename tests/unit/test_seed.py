@@ -63,7 +63,9 @@ def test_seed_uses_coordinator_and_skips_zero_balance_deposit(monkeypatch) -> No
     assert [result.deposit_replayed for result in results] == [False, False, None]
 
 
-def test_repeated_or_partially_completed_seed_replays_same_operations(monkeypatch) -> None:
+def test_repeated_or_partially_completed_seed_replays_same_operations(
+    monkeypatch,
+) -> None:
     calls = []
 
     def create(session_factory, request_id, name):
@@ -89,7 +91,9 @@ def test_repeated_or_partially_completed_seed_replays_same_operations(monkeypatc
     assert [result.deposit_replayed for result in second] == [True, True, None]
 
 
-def test_seed_main_returns_nonzero_without_exposing_failure_details(monkeypatch, capsys) -> None:
+def test_seed_main_returns_nonzero_without_exposing_failure_details(
+    monkeypatch, capsys
+) -> None:
     monkeypatch.setattr(
         seed.Settings,
         "from_environment",
@@ -104,9 +108,7 @@ def test_seed_main_returns_nonzero_without_exposing_failure_details(monkeypatch,
 
 def test_image_and_scripts_use_explicit_temporary_compose_runs() -> None:
     dockerfile = Path("server/Dockerfile").read_text(encoding="utf-8")
-    migration = Path("infra/standalone/scripts/migrate.sh").read_text(
-        encoding="utf-8"
-    )
+    migration = Path("infra/standalone/scripts/migrate.sh").read_text(encoding="utf-8")
     seeding = Path("infra/standalone/scripts/seed.sh").read_text(encoding="utf-8")
 
     assert "server/alembic.ini" in dockerfile
