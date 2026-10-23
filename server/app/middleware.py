@@ -85,35 +85,34 @@ class RequestLoggingMiddleware:
             duration_ms = round((monotonic() - started) * 1000, 3)
             path = _normalized_path(scope)
             method = scope["method"]
-            if not (method == "GET" and path == "/ready" and status_code == 200):
-                metadata = {
-                    "event": "http_request_completed",
-                    "request_id": correlation_id,
-                    "correlation_id": correlation_id,
-                    "client_ip": _client_ip(scope),
-                    "method": method,
-                    "path": path,
-                    "action": _ACTIONS.get((method, path), "UNSUPPORTED"),
-                    "account_id": _account_id(scope, state),
-                    "status_code": status_code,
-                    "result": _result(status_code, state),
-                    "duration_ms": duration_ms,
-                }
-                if path in _MUTATING_PATHS and valid_idempotency_key is not None:
-                    metadata["idempotency_key"] = valid_idempotency_key
-                for field in (
-                    "operation",
-                    "business_status",
-                    "replayed",
-                    "error_code",
-                ):
-                    if field in state:
-                        metadata[field] = state[field]
-                logger.log(
-                    _completion_level(status_code, state),
-                    "HTTP request completed",
-                    extra=metadata,
-                )
+            metadata = {
+                "event": "http_request_completed",
+                "request_id": correlation_id,
+                "correlation_id": correlation_id,
+                "client_ip": _client_ip(scope),
+                "method": method,
+                "path": path,
+                "action": _ACTIONS.get((method, path), "UNSUPPORTED"),
+                "account_id": _account_id(scope, state),
+                "status_code": status_code,
+                "result": _result(status_code, state),
+                "duration_ms": duration_ms,
+            }
+            if path in _MUTATING_PATHS and valid_idempotency_key is not None:
+                metadata["idempotency_key"] = valid_idempotency_key
+            for field in (
+                "operation",
+                "business_status",
+                "replayed",
+                "error_code",
+            ):
+                if field in state:
+                    metadata[field] = state[field]
+            logger.log(
+                _completion_level(status_code, state),
+                "HTTP request completed",
+                extra=metadata,
+            )
             correlation_id_context.reset(token)
 
 

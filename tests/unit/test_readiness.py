@@ -98,7 +98,7 @@ def test_ready_is_unavailable_when_database_is_in_recovery(monkeypatch) -> None:
     assert UUID(response.headers["X-Request-ID"]).version == 4
 
 
-def test_successful_ready_suppresses_completion_log(monkeypatch, caplog) -> None:
+def test_successful_ready_logs_info_completion(monkeypatch, caplog) -> None:
     _configure_lifespan(monkeypatch)
 
     with (
@@ -114,7 +114,15 @@ def test_successful_ready_suppresses_completion_log(monkeypatch, caplog) -> None
     ]
     assert response.status_code == 200
     assert UUID(response.headers["X-Request-ID"]).version == 4
-    assert completion == []
+    assert len(completion) == 1
+    assert completion[0].levelno == logging.INFO
+    assert completion[0].request_id == response.headers["X-Request-ID"]
+    assert completion[0].correlation_id == response.headers["X-Request-ID"]
+    assert completion[0].client_ip == "testclient"
+    assert completion[0].action == "READINESS"
+    assert completion[0].status_code == 200
+    assert completion[0].result == "SUCCEEDED"
+    assert completion[0].duration_ms >= 0
 
 
 def test_failed_ready_logs_error_completion(monkeypatch, caplog) -> None:
