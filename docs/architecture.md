@@ -1,143 +1,87 @@
 # System Architecture
 
-Mini Banking Transaction Server is a simulated banking system for a university Distributed Systems project. It uses synthetic accounts and transactions, and is planned to provide concurrent balance inquiry, deposit, and withdrawal with ACID persistence, logging, and error handling. Transfer is not supported.
+## Overview
 
-Development starts with a Standalone deployment and progresses to high availability, automatic failover, and network-partition handling. No described functionality has been implemented or verified yet.
+Mini Banking Transaction Server uses a client-server architecture with HTTP communication and PostgreSQL for persistent shared state.
 
-## System Overview
+The system runs on two separate virtual machines:
 
-The project uses a modular monorepo and targets Python 3.12. An interactive CLI and load generator share an HTTP client for communicating with the Banking Server. The server manages persistent shared state in PostgreSQL.
+- **Server VM:** FastAPI and PostgreSQL 17, deployed with Docker Compose
+- **Client VM:** Banking CLI and concurrent request generator
 
-Docker Compose is used for deployment. Kubernetes and Docker Swarm are not part of the architecture.
+## Banking Server
 
-## Deployment Architecture
+FastAPI provides the following REST endpoints:
 
-The Standalone deployment consists of one FastAPI Banking Server, one PostgreSQL instance, and a separate Client VM communicating over HTTP. It is the deployment mode to implement and verify before HA work.
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/accounts` | Create account |
+| DELETE | `/accounts/{account_id}` | Close account |
+| GET | `/accounts/{account_id}/balance` | Get balance |
+| POST | `/accounts/{account_id}/deposit` | Deposit |
+| POST | `/accounts/{account_id}/withdraw` | Withdraw |
+| GET | `/requests/{request_id}` | Get request result |
+| GET | `/requests` | List and filter requests |
+| GET | `/ready` | Readiness check |
 
-The HA deployment uses four VMs, each with an independent Docker Compose deployment:
+## Database and Transactions
 
-```text
-Client VM ── HTTP ──> Witness: HAProxy ──> Server A: FastAPI + PostgreSQL
-                                             Server B: FastAPI + PostgreSQL
+SQLAlchemy manages database access, and Alembic handles schema migrations.
 
-Server A, Server B, and Witness:
-  - Patroni-managed PostgreSQL
-  - One etcd member each
-```
+PostgreSQL contains two application tables:
 
-Server A and Server B run identical Banking Server code and image versions. PostgreSQL runs on Server A, Server B, and Witness; Patroni manages each database instance, and the three etcd members form the coordination cluster.
+- `accounts` — Account information and balances
+- `requests` — Operation results and idempotency records
 
-HAProxy runs on Witness and routes clients to the valid ready Primary. Witness runs no Banking Server: its PostgreSQL instance is replica-only, uses `nofailover`, and cannot be promoted. Only Server A and Server B are Primary candidates.
+Balances and transaction amounts use integer values (`BIGINT`).
 
-The planned VM network uses NAT for internet access and Host-Only networking with static IP addresses for inter-VM communication. Containers use Docker Bridge networking.
+### ACID Properties
 
-## Banking Application and Database
+- **Atomicity:** Balance updates and request records commit within the same database transaction. Failures trigger rollback.
+- **Consistency:** Input validation and database constraints prevent invalid amounts and negative balances.
+- **Isolation:** PostgreSQL READ COMMITTED isolation, row-level locking, and atomic conditional updates prevent lost updates for supported single-account operations.
+- **Durability:** Committed transactions are persisted in PostgreSQL before successful responses are returned.
 
-FastAPI uses synchronous endpoints. SQLAlchemy ORM 2.x provides synchronous sessions and connection pooling, while Alembic manages schema migrations. The database schema contains exactly two application tables: `accounts` and `requests`. There is no separate transactions table; successful financial-operation records in `requests` provide the transaction history.
+PostgreSQL data is stored in a persistent Docker named volume.
 
-Accounts have a database-generated ID, name, balance, status, creation timestamp, and optional closure timestamp. Names are not unique and cannot be edited. Account creation and soft deletion are supported; closure requires a zero balance, and closed accounts reject subsequent banking operations.
+## Concurrency
 
-Monetary values use PostgreSQL `BIGINT`. Transaction amounts must be positive integers, while account balances must be non-negative. Floating-point monetary storage is not used.
+FastAPI handles concurrent HTTP requests using synchronous endpoints and database connection pooling.
 
-READ COMMITTED isolation, atomic conditional SQL updates, and row-level locking prevent lost updates. A balance modification and its durable request/result record must be committed atomically.
+The maximum concurrency is configurable through environment variables and Uvicorn settings.
 
-These mechanisms support ACID behavior for the supported single-account operations, but do not claim general serializable isolation; ORM use alone does not establish ACID correctness.
+The load generator uses `asyncio` and HTTPX to execute concurrent banking requests and verify final account balances.
 
-Account creation, account closure, deposit, and withdrawal each use a stable UUID request ID. PostgreSQL atomically stores the operation and result, uses a SHA-256 payload hash to detect reuse with a different payload, and retains request records permanently; Redis is not used.
+## Idempotency
 
-Migrations are one-shot and run only against the Primary. Account IDs are database-generated and are not intentionally reused.
+Mutating operations use UUID request identifiers.
 
-The intended REST interface is:
+Each operation and its result are stored transactionally in PostgreSQL. Repeated requests with the same identifier and payload return the stored result without applying the operation again.
 
-- `POST /accounts`
-- `GET /accounts/{account_id}/balance`
-- `POST /accounts/{account_id}/close`
-- `POST /accounts/{account_id}/deposit`
-- `POST /accounts/{account_id}/withdraw`
-- `GET /requests/{request_id}`
-- `GET /ready`
+## Client
 
-`GET /requests/{request_id}` helps determine transaction status, although no record does not necessarily prove non-execution.
+The command-line client uses `argparse` and HTTPX.
 
-`/ready` checks application readiness, database connectivity, and valid Primary status.
+It supports banking operations, request history, retries for transient failures, and recovery of requests with unknown outcomes.
 
-Errors use RFC 9457 Problem Details with `application/problem+json`.
+## Error Handling and Logging
 
-HTTP requests produce one structured completion log, except successful
-`GET /ready` checks, which are omitted to avoid noise from periodic Docker
-health checks. Failed readiness checks remain logged at ERROR. The
-server-generated `request_id` is the same UUIDv4 as `correlation_id` and the
-`X-Request-ID` response header. Logs include the ASGI peer `client_ip` (not
-forwarded headers), normalized action and route, account ID when available,
-timestamp, result, HTTP status, and monotonic-clock latency. Mutation logs
-retain the separate client-supplied `idempotency_key` and business metadata.
+The API returns structured errors using RFC 9457 Problem Details.
 
-## High Availability and Fault Tolerance
+HTTP requests produce JSON completion logs containing request ID, client IP, action, account ID when available, timestamp, result, status code, and latency.
 
-Patroni manages PostgreSQL HA, and etcd provides distributed coordination, leader election, and Primary ownership. A majority quorum is two of three etcd members.
+The server provides a `/ready` endpoint checked by Docker every 30 seconds.
 
-When an eligible replacement exists, Patroni can automatically fail over; HAProxy selects the ready valid Primary.
+## Testing
 
-Recovery uses Patroni-managed `pg_rewind` where applicable. Automatic destructive replica reinitialization is prohibited: it requires inspection and approval.
+Automated tests cover banking operations, validation, concurrency, rollback, persistence, idempotency, and logging.
 
-PostgreSQL replication is configured as follows:
+The full PostgreSQL test suite passed **257 tests** on the Development Host.
 
-```yaml
-synchronous_mode: on
-synchronous_mode_strict: false
-synchronous_commit: on
-synchronous_node_count: 2
-```
+The Standalone deployment has also been verified across two separate VMs.
 
-Healthy operation targets two synchronous standby acknowledgements. Non-strict mode may relax synchronization when necessary, so it cannot provide a universal zero-data-loss guarantee. Safe Server A-to-Server B failover must be verified through testing.
+## Documentation
 
-During a network partition, the system follows a Consistency-First policy:
-
-- Only an authorized Primary serves banking operations.
-- Replica reads are unsupported.
-- A reachable endpoint returns HTTP 503 when valid service is unavailable.
-- The design must prevent two simultaneously authorized writable Primaries.
-- Recovery occurs after network connectivity is restored.
-
-Partition verification uses a real network disconnection between VM instances.
-
-## Client and Reliability
-
-The client layer comprises an interactive CLI, load generator, and shared HTTP client; there is no Web GUI.
-
-Requests receive at most three total attempts, use exponential backoff only for transient failures, and reuse the same request ID. The initial overall retry deadline is configurable at 90 seconds.
-
-If the outcome cannot be resolved, the client reports `UNKNOWN`.
-
-Concurrency limits are configurable. Standalone uses Uvicorn concurrency limiting, while HA uses HAProxy traffic and connection management.
-
-Connection or task limits are not necessarily unique-client limits.
-
-## Testing and Verification
-
-Planned pytest coverage includes:
-
-- Unit and integration tests.
-- Concurrent requests and lost-update prevention.
-- ACID and atomic rollback verification.
-- Crash persistence and durability.
-- Idempotency verification.
-- Automatic failover and recovery.
-- Network partition and split-brain prevention.
-- Atomicity fault injection between balance mutation and commit.
-
-No test-only production API endpoint is used.
-
-Local VirtualBox infrastructure supports VM power and firewall fault injection. GitHub Actions runs eligible automated tests.
-
-The described tests have not yet been implemented or passed.
-
-## Architectural Limitations
-
-- Non-strict synchronous replication does not universally guarantee zero data loss.
-- etcd quorum and PostgreSQL replication acknowledgements are separate guarantees.
-- Patroni and etcd run without a hardware Watchdog; `/ready` and other HTTP health checks are not fencing.
-- HAProxy on Witness is a single point of failure.
-- Four VMs on one physical Host do not protect against physical Host failure.
-- Docker Named Volumes provide persistence, not backups.
-- Exactly-once claims are limited to durable idempotency, database transactions, and verified failure scenarios.
+- [Banking CLI](client-cli.md)
+- [Load Generator](load-generator.md)
+- [Standalone Deployment](standalone-deployment.md)

@@ -133,7 +133,8 @@ docker compose --env-file infra/standalone/.env \
 
 Expected readiness is HTTP 200 with `{"status":"ready"}`. The `db` and `api`
 services shown by `docker compose ps` should both be healthy. API request log
-lines should be JSON objects.
+lines should be JSON objects. Each successful `/ready` request produces one INFO
+completion log. Compose runs the API health check every 30 seconds.
 
 ## Client VM setup
 

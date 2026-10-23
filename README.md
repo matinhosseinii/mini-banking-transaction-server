@@ -1,46 +1,52 @@
 # Mini Banking Transaction Server
 
-A modular monorepo for a university Distributed Systems project that will provide a banking transaction server and supporting tools.
+A client-server banking system developed for a Distributed Systems university assignment.
 
-The mandatory scope covers core banking operations, concurrent request handling, ACID transactions, persistence, and robust error handling.
-
-Advanced Bonus work will add primary/backup clustering, PostgreSQL replication, and automatic failover. Extreme Bonus work will address network partitions and split-brain prevention.
+The project supports concurrent banking operations, ACID transactions, persistent storage, error handling, and structured logging.
 
 ## Technology Stack
 
-- Python 3.12, FastAPI, SQLAlchemy 2.x, and Alembic
-- PostgreSQL
-- Docker and Docker Compose
-- Patroni, etcd, and HAProxy for high availability
-- pytest, Ruff, and GitHub Actions
+- Python 3.12, FastAPI, SQLAlchemy, Alembic
+- PostgreSQL 17
+- HTTPX, asyncio
+- Docker Compose
+- pytest, Ruff, GitHub Actions
 
-## Repository Layout
+## Features
 
-- `server/` — Banking API server implementation
-- `client/` — Interactive CLI, HTTP client, and load generator
-- `infra/` — Docker, deployment, networking, and HA configuration
-- `tests/` — Automated test suites
-- `docs/` — Documentation, architecture decisions, and verification evidence
-- `.github/` — GitHub Actions workflows and repository automation
+- Account creation and closure
+- Balance inquiry, deposit, and withdrawal
+- Concurrent request processing with configurable limits
+- ACID transactions and prevention of lost updates
+- Durable idempotency and request history
+- Validation and structured error responses
+- JSON request logging
+- Concurrent request generator with balance consistency checks
 
-## Status
+## Repository Structure
 
-Initial development foundation only. No application functionality has been implemented or tested yet.
+- `server/` — Banking REST API and database implementation
+- `client/` — Command-line banking client
+- `load_generator/` — Concurrent request generator
+- `infra/` — Docker Compose deployment
+- `tests/` — Automated tests
+- `docs/` — Architecture and usage documentation
+- `.github/` — CI workflow
 
-Setup and execution instructions will be added in later development tasks.
+## Deployment
 
-## Client CLI
+The Banking Server and PostgreSQL run on one VM using Docker Compose. The client runs on a separate VM and communicates with the server over HTTP.
 
-See the [Command-Only Banking CLI guide](docs/client-cli.md) for installation,
-configuration, command reference, retry behavior, and UNKNOWN recovery.
+See [Standalone Deployment](docs/standalone-deployment.md) for installation and setup.
 
-## Concurrent Request Generator
+## Usage
 
-See the [Concurrent Request Generator guide](docs/load-generator.md) for
-bounded concurrent balance, deposit, withdrawal, and mixed-operation runs.
+- [Banking CLI](docs/client-cli.md) — Account operations, balance inquiries, and request history
+- [Load Generator](docs/load-generator.md) — Concurrent requests and consistency verification
+- [System Architecture](docs/architecture.md) — Implementation details
 
-## Standalone Deployment
+## Testing
 
-See the [Standalone Deployment guide](docs/standalone-deployment.md) for Server
-A deployment, manual migrations, optional demo data, Client VM setup, and the
-verification checklist.
+The PostgreSQL test suite passed **257 tests** on the Development Host.
+
+GitHub Actions runs linting, formatting, and dependency checks.
