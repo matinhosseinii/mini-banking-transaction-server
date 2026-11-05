@@ -12,6 +12,9 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: assignment1
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
