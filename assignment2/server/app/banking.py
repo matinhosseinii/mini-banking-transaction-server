@@ -6,10 +6,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
 
 from server.app.models import Account
+from server.app.sharding import SHARD_INITIALIZATION_LOCK, ShardDefinition
 
 
 class OperationStatus(StrEnum):
@@ -60,12 +61,31 @@ class BalanceResult:
     error_code: BusinessErrorCode | None = None
 
 
-def create_account(session: Session, name: str) -> MutationResult:
+def create_account(
+    session: Session,
+    name: str,
+    shard: ShardDefinition | None = None,
+) -> MutationResult:
     """Create an active, zero-balance account in the caller's transaction."""
     if not isinstance(name, str) or not name.strip():
         raise BankingValidationError("Account name must contain non-whitespace.")
 
+    account_id = None
+    if shard is not None:
+        session.execute(
+            text("SELECT pg_advisory_xact_lock_shared(:key)"),
+            {"key": SHARD_INITIALIZATION_LOCK},
+        )
+        account_id = session.execute(
+            text("SELECT nextval(pg_get_serial_sequence('accounts', 'id'))")
+        ).scalar_one()
+        if not shard.owns(account_id):
+            raise BankingValidationError(
+                f"Shard {shard.shard_id} account range is full."
+            )
+
     account = Account(
+        id=account_id,
         name=name,
         balance=0,
         status=AccountStatus.ACTIVE,

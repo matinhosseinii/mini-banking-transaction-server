@@ -18,6 +18,7 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 COPY --chown=app:app server/app /app/server/app
 COPY --chown=app:app server/alembic.ini /app/server/alembic.ini
 COPY --chown=app:app server/migrations /app/server/migrations
+COPY --chown=app:app server/shard_map.json /app/server/shard_map.json
 
 USER app
 

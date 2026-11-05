@@ -12,6 +12,7 @@ from server.app.banking import OperationStatus
 from server.app.config import Settings
 from server.app.database import create_database_engine, create_session_factory
 from server.app.idempotency import coordinate_create_account, coordinate_deposit
+from server.app.sharding import ShardDefinition, get_shard
 
 SEED_NAMESPACE = UUID("f4602cd7-faf7-4c98-81e7-62d1aeef19fd")
 
@@ -46,7 +47,10 @@ def seed_request_id(operation: str, account_name: str) -> UUID:
     return uuid5(SEED_NAMESPACE, f"standalone-demo-v1:{operation}:{account_name}")
 
 
-def seed_accounts(session_factory: sessionmaker[Session]) -> list[SeedResult]:
+def seed_accounts(
+    session_factory: sessionmaker[Session],
+    shard: ShardDefinition | None = None,
+) -> list[SeedResult]:
     """Create and fund all demo accounts through durable idempotency."""
     results = []
     for definition in DEMO_ACCOUNTS:
@@ -54,6 +58,7 @@ def seed_accounts(session_factory: sessionmaker[Session]) -> list[SeedResult]:
             session_factory,
             seed_request_id("create", definition.name),
             definition.name,
+            shard,
         )
         if (
             created.result.status is not OperationStatus.SUCCEEDED
@@ -96,7 +101,9 @@ def main() -> int:
     try:
         settings = Settings.from_environment()
         engine = create_database_engine(settings)
-        results = seed_accounts(create_session_factory(engine))
+        results = seed_accounts(
+            create_session_factory(engine), get_shard(settings.shard_id)
+        )
     except Exception as error:  # noqa: BLE001 - utility boundary returns nonzero.
         print(f"Demo seed failed: {type(error).__name__}.", file=sys.stderr)
         return 1

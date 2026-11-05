@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from server.app import banking, idempotency
 from server.app.banking import OperationStatus
-from server.app.dependencies import get_session_factory
+from server.app.dependencies import get_local_shard, get_session_factory
 from server.app.errors import PROBLEM_MEDIA_TYPE, business_problem, problem_response
 from server.app.idempotency import CoordinatedResult, Operation
 from server.app.request_queries import list_requests
@@ -23,6 +23,7 @@ from server.app.schemas import (
     RequestHistoryResponse,
     StoredRequestResponse,
 )
+from server.app.sharding import InvalidAccountId, ShardDefinition
 
 router = APIRouter()
 PositivePathId = Annotated[int, Path(gt=0)]
@@ -41,6 +42,18 @@ PROBLEM_RESPONSES = {
 }
 
 SessionFactory = Annotated[sessionmaker[Session], Depends(get_session_factory)]
+LocalShard = Annotated[ShardDefinition, Depends(get_local_shard)]
+
+
+def _require_local_owner(shard: ShardDefinition, account_id: int) -> None:
+    """Reject foreign-shard IDs while preserving legacy not-found behavior."""
+    try:
+        shard.require_owner(account_id)
+    except InvalidAccountId:
+        # Positive integers outside the configured global range retain the
+        # existing ACCOUNT_NOT_FOUND contract. Mutations remain durably
+        # idempotent because they continue through the coordinator.
+        return
 
 
 def _public_result(result: idempotency.RequestResult) -> dict[str, object]:
@@ -87,10 +100,13 @@ def create_account(
     body: CreateAccountRequest,
     request_id: IdempotencyKey,
     session_factory: SessionFactory,
+    shard: LocalShard,
 ) -> MutationResponse | object:
     return _mutation_response(
         request,
-        idempotency.coordinate_create_account(session_factory, request_id, body.name),
+        idempotency.coordinate_create_account(
+            session_factory, request_id, body.name, shard
+        ),
     )
 
 
@@ -104,7 +120,9 @@ def close_account(
     account_id: PositivePathId,
     request_id: IdempotencyKey,
     session_factory: SessionFactory,
+    shard: LocalShard,
 ) -> MutationResponse | object:
+    _require_local_owner(shard, account_id)
     return _mutation_response(
         request,
         idempotency.coordinate_close_account(session_factory, request_id, account_id),
@@ -120,7 +138,9 @@ def get_balance(
     request: Request,
     account_id: PositivePathId,
     session_factory: SessionFactory,
+    shard: LocalShard,
 ) -> BalanceResponse | object:
+    _require_local_owner(shard, account_id)
     request.state.account_id = account_id
     with session_factory() as session:
         result = banking.get_balance(session, account_id)
@@ -151,7 +171,9 @@ def deposit(
     body: AmountRequest,
     request_id: IdempotencyKey,
     session_factory: SessionFactory,
+    shard: LocalShard,
 ) -> MutationResponse | object:
+    _require_local_owner(shard, account_id)
     return _mutation_response(
         request,
         idempotency.coordinate_deposit(
@@ -171,7 +193,9 @@ def withdraw(
     body: AmountRequest,
     request_id: IdempotencyKey,
     session_factory: SessionFactory,
+    shard: LocalShard,
 ) -> MutationResponse | object:
+    _require_local_owner(shard, account_id)
     return _mutation_response(
         request,
         idempotency.coordinate_withdraw(

@@ -19,6 +19,7 @@ class Settings:
     database_url: str
     max_concurrent_clients: int
     log_level: str
+    shard_id: str = "A"
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] | None = None) -> Settings:
@@ -33,10 +34,18 @@ class Settings:
             values.get("MAX_CONCURRENT_CLIENTS", "100"), "MAX_CONCURRENT_CLIENTS"
         )
         log_level = _log_level(values.get("LOG_LEVEL", "INFO"))
+        shard_id = values.get("SHARD_ID", "A").strip().upper()
+        from server.app.sharding import ShardConfigurationError, get_shard
+
+        try:
+            get_shard(shard_id)
+        except ShardConfigurationError as error:
+            raise ConfigurationError("SHARD_ID must be A or B.") from error
         return cls(
             database_url=database_url,
             max_concurrent_clients=max_concurrent_clients,
             log_level=log_level,
+            shard_id=shard_id,
         )
 
 

@@ -22,6 +22,7 @@ from server.app.banking import (
     OperationStatus,
 )
 from server.app.models import Request
+from server.app.sharding import ShardDefinition
 
 _LOCK_NAMESPACE = b"mini-banking:idempotency:v1\x00"
 
@@ -80,6 +81,7 @@ def coordinate_create_account(
     session_factory: sessionmaker[Session],
     request_id: UUID,
     name: str,
+    shard: ShardDefinition | None = None,
 ) -> CoordinatedResult:
     """Create an account at most once for a logical request UUID."""
     _validate_request_id(request_id)
@@ -94,7 +96,7 @@ def coordinate_create_account(
         requested_account_id=None,
         amount=None,
         payload_hash=payload_hash,
-        execute=lambda session: banking.create_account(session, name),
+        execute=lambda session: banking.create_account(session, name, shard),
     )
 
 

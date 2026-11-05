@@ -15,8 +15,10 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
+from server.app.dependencies import get_local_shard
 from server.app.main import app, get_session_factory
 from server.app.models import Account, Request
+from server.app.sharding import get_shard
 
 
 @contextmanager
@@ -60,6 +62,7 @@ def http_database() -> Iterator[sessionmaker[Session]]:
 @pytest.fixture
 def client(http_database) -> Iterator[TestClient]:
     app.dependency_overrides[get_session_factory] = lambda: http_database
+    app.dependency_overrides[get_local_shard] = lambda: get_shard("A")
     test_client = TestClient(app, raise_server_exceptions=False)
     yield test_client
     test_client.close()
@@ -162,6 +165,31 @@ def test_conflicts_and_business_rejections_are_durable(client, http_database) ->
         assert stored is not None
         assert stored.status == "REJECTED"
         assert stored.amount == 10
+
+
+def test_wrong_shard_request_changes_neither_balance_nor_requests(
+    client, http_database
+) -> None:
+    created = _mutate(client, "POST", "/accounts", {"name": "Shard A owner"})
+    account_id = created.json()["account_id"]
+    with http_database() as session:
+        balance_before = session.get(Account, account_id).balance
+        requests_before = session.scalar(select(func.count()).select_from(Request))
+
+    rejected = _mutate(
+        client,
+        "POST",
+        "/accounts/1001/deposit",
+        {"amount": 500},
+    )
+
+    assert rejected.status_code == 422
+    assert rejected.json()["error_code"] == "WRONG_SHARD"
+    with http_database() as session:
+        assert session.get(Account, account_id).balance == balance_before
+        assert (
+            session.scalar(select(func.count()).select_from(Request)) == requests_before
+        )
 
 
 def test_history_filters_counts_and_paginates_in_sql(client) -> None:

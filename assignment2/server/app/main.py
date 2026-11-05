@@ -18,6 +18,7 @@ from server.app.database import (
 from server.app.dependencies import get_session_factory
 from server.app.logging_config import configure_logging
 from server.app.middleware import RequestLoggingMiddleware
+from server.app.sharding import get_shard
 
 
 @asynccontextmanager
@@ -27,11 +28,14 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     configure_logging(settings.log_level)
     engine = create_database_engine(settings)
     application.state.session_factory = create_session_factory(engine)
+    application.state.shard = get_shard(settings.shard_id)
     try:
         yield
     finally:
         if hasattr(application.state, "session_factory"):
             del application.state.session_factory
+        if hasattr(application.state, "shard"):
+            del application.state.shard
         engine.dispose()
 
 

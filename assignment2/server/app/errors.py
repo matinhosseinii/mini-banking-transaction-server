@@ -15,6 +15,7 @@ from starlette.exceptions import HTTPException
 
 from server.app.banking import BankingValidationError, BusinessErrorCode
 from server.app.idempotency import CoordinatedResult, IdempotencyConflict
+from server.app.sharding import InvalidAccountId, WrongShardError
 
 logger = logging.getLogger(__name__)
 PROBLEM_MEDIA_TYPE = "application/problem+json"
@@ -104,6 +105,14 @@ def register_exception_handlers(app: FastAPI) -> None:
     ) -> JSONResponse:
         request.state.log_classification = "validation_error"
         return problem_response(422, str(error))
+
+    @app.exception_handler(InvalidAccountId)
+    @app.exception_handler(WrongShardError)
+    async def shard_ownership_handler(
+        request: Request, error: InvalidAccountId | WrongShardError
+    ) -> JSONResponse:
+        request.state.log_classification = "validation_error"
+        return problem_response(422, str(error), error_code="WRONG_SHARD")
 
     @app.exception_handler(IdempotencyConflict)
     async def idempotency_conflict_handler(

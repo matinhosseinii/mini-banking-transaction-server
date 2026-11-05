@@ -13,13 +13,16 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from server.app.banking import BusinessErrorCode, OperationStatus
+from server.app.dependencies import get_local_shard
 from server.app.idempotency import CoordinatedResult, Operation, RequestResult
 from server.app.main import app, get_session_factory
+from server.app.sharding import get_shard
 
 
 @pytest.fixture
 def client() -> TestClient:
     app.dependency_overrides[get_session_factory] = lambda: MagicMock()
+    app.dependency_overrides[get_local_shard] = lambda: get_shard("A")
     test_client = TestClient(app, raise_server_exceptions=False)
     yield test_client
     test_client.close()
@@ -104,7 +107,7 @@ def test_successful_create_uses_201_and_hides_payload_hash(client, monkeypatch) 
     outcome = _outcome(operation=Operation.CREATE_ACCOUNT, replayed=True)
     monkeypatch.setattr(
         "server.app.routes.idempotency.coordinate_create_account",
-        lambda session_factory, request_id, name: outcome,
+        lambda *args: outcome,
     )
 
     response = client.post(

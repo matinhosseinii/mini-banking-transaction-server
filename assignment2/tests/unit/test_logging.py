@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import OperationalError
 
 from server.app.banking import BusinessErrorCode, OperationStatus
+from server.app.dependencies import get_local_shard
 from server.app.idempotency import CoordinatedResult, Operation, RequestResult
 from server.app.logging_config import (
     JsonFormatter,
@@ -24,11 +25,13 @@ from server.app.logging_config import (
     correlation_id_context,
 )
 from server.app.main import app, get_session_factory
+from server.app.sharding import get_shard
 
 
 @pytest.fixture
 def client() -> TestClient:
     app.dependency_overrides[get_session_factory] = lambda: MagicMock()
+    app.dependency_overrides[get_local_shard] = lambda: get_shard("A")
     test_client = TestClient(app, raise_server_exceptions=False)
     yield test_client
     test_client.close()
@@ -404,11 +407,11 @@ def test_unmatched_route_uses_safe_path_and_one_completion(client, caplog) -> No
     assert "user-controlled" not in caplog.text
 
 
-def test_compose_configures_rotation_only_for_api() -> None:
+def test_compose_configures_rotation_only_for_applications() -> None:
     compose = Path("infra/standalone/compose.yaml").read_text()
 
-    api_section, database_section = compose.split("\n  db:\n", maxsplit=1)
-    assert "driver: json-file" in api_section
-    assert 'max-size: "10m"' in api_section
-    assert 'max-file: "3"' in api_section
+    applications, database_section = compose.split("\n  postgres-a:\n", maxsplit=1)
+    assert applications.count("driver: json-file") == 2
+    assert applications.count('max-size: "10m"') == 2
+    assert applications.count('max-file: "3"') == 2
     assert "driver: json-file" not in database_section

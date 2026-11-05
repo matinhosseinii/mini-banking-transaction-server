@@ -45,7 +45,7 @@ def test_seed_uses_coordinator_and_skips_zero_balance_deposit(monkeypatch) -> No
     creates = []
     deposits = []
 
-    def create(session_factory, request_id, name):
+    def create(session_factory, request_id, name, shard):
         creates.append((session_factory, request_id, name))
         return _outcome(len(creates), replayed=False)
 
@@ -68,7 +68,7 @@ def test_repeated_or_partially_completed_seed_replays_same_operations(
 ) -> None:
     calls = []
 
-    def create(session_factory, request_id, name):
+    def create(session_factory, request_id, name, shard):
         calls.append(("create", request_id, name))
         account_id = [item.name for item in seed.DEMO_ACCOUNTS].index(name) + 10
         return _outcome(account_id, replayed=True)
@@ -113,8 +113,11 @@ def test_image_and_scripts_use_explicit_temporary_compose_runs() -> None:
 
     assert "server/alembic.ini" in dockerfile
     assert "server/migrations" in dockerfile
-    assert "run --rm --no-deps api" in migration
+    assert "for service in bank-a bank-b" in migration
+    assert 'run --rm --no-deps "$service"' in migration
     assert "alembic -c /app/server/alembic.ini upgrade head" in migration
-    assert "run --rm --no-deps api" in seeding
+    assert "python -m server.app.initialize_shard" in migration
+    assert "for service in bank-a bank-b" in seeding
+    assert 'run --rm --no-deps "$service"' in seeding
     assert "python -m server.app.seed" in seeding
     assert "down -v" not in migration + seeding

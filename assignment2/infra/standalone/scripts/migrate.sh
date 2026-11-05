@@ -4,8 +4,15 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 STANDALONE_DIR=$(dirname -- "$SCRIPT_DIR")
 
-docker compose \
-  --env-file "$STANDALONE_DIR/.env" \
-  -f "$STANDALONE_DIR/compose.yaml" \
-  run --rm --no-deps api \
-  alembic -c /app/server/alembic.ini upgrade head
+for service in bank-a bank-b; do
+  docker compose \
+    --env-file "$STANDALONE_DIR/.env" \
+    -f "$STANDALONE_DIR/compose.yaml" \
+    run --rm --no-deps "$service" \
+    alembic -c /app/server/alembic.ini upgrade head
+  docker compose \
+    --env-file "$STANDALONE_DIR/.env" \
+    -f "$STANDALONE_DIR/compose.yaml" \
+    run --rm --no-deps "$service" \
+    python -m server.app.initialize_shard
+done

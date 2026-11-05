@@ -1,6 +1,6 @@
 """Unit tests for Banking Service validation and result behavior."""
 
-from unittest.mock import create_autospec
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
 from sqlalchemy.orm import Session
@@ -13,6 +13,7 @@ from server.app.banking import (
     deposit,
     withdraw,
 )
+from server.app.sharding import get_shard
 
 
 @pytest.mark.parametrize("name", ["", "   ", "\t\n", None])
@@ -54,3 +55,17 @@ def test_business_rejection_is_returned_without_transaction_control() -> None:
     assert result.error_code is BusinessErrorCode.ACCOUNT_NOT_FOUND
     session.commit.assert_not_called()
     session.rollback.assert_not_called()
+
+
+def test_create_account_rejects_exhausted_shard_before_insert() -> None:
+    session = create_autospec(Session, instance=True)
+    lock_result = MagicMock()
+    sequence_result = MagicMock()
+    sequence_result.scalar_one.return_value = 1001
+    session.execute.side_effect = [lock_result, sequence_result]
+
+    with pytest.raises(BankingValidationError, match="Shard A account range is full"):
+        create_account(session, "No capacity", get_shard("A"))
+
+    session.add.assert_not_called()
+    session.flush.assert_not_called()
