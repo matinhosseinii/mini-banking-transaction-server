@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from time import monotonic
 from typing import Any
 from uuid import UUID, uuid4
@@ -97,6 +98,8 @@ class RequestLoggingMiddleware:
                 "status_code": status_code,
                 "result": _result(status_code, state),
                 "duration_ms": duration_ms,
+                "shard_id": os.environ.get("SHARD_ID"),
+                "replica_id": os.environ.get("REPLICA_ID"),
             }
             if path in _MUTATING_PATHS and valid_idempotency_key is not None:
                 metadata["idempotency_key"] = valid_idempotency_key

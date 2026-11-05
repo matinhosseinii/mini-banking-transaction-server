@@ -113,11 +113,11 @@ def test_image_and_scripts_use_explicit_temporary_compose_runs() -> None:
 
     assert "server/alembic.ini" in dockerfile
     assert "server/migrations" in dockerfile
-    assert "for service in bank-a bank-b" in migration
+    assert "for service in bank-a1 bank-b1" in migration
     assert 'run --rm --no-deps "$service"' in migration
     assert "alembic -c /app/server/alembic.ini upgrade head" in migration
     assert "python -m server.app.initialize_shard" in migration
-    assert "for service in bank-a bank-b" in seeding
+    assert "for service in bank-a1 bank-b1" in seeding
     assert 'run --rm --no-deps "$service"' in seeding
     assert "python -m server.app.seed" in seeding
     assert "down -v" not in migration + seeding

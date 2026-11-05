@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
 from uuid import uuid4
 
@@ -17,6 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from server.app.banking import OperationStatus, deposit, get_balance, withdraw
 from server.app.config import Settings
 from server.app.database import create_session_factory
+from server.app.idempotency import coordinate_deposit
 from server.app.initialize_shard import initialize_database
 from server.app.models import Account
 from server.app.seed import seed_accounts
@@ -133,3 +135,23 @@ def test_reinitialization_never_moves_sequence_backward(shard_engines) -> None:
             text("SELECT nextval('accounts_id_seq')")
         ).scalar_one()
     assert next_id == 901
+
+
+def test_two_replica_factories_share_concurrency_and_idempotency(
+    shard_engines,
+) -> None:
+    engine = shard_engines["B"]
+    replica_one = _sessions(engine)
+    replica_two = _sessions(engine)
+    request_id = uuid4()
+
+    def deposit_once(factory):
+        return coordinate_deposit(factory, request_id, 1002, 75)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(deposit_once, (replica_one, replica_two)))
+
+    assert sorted(outcome.replayed for outcome in outcomes) == [False, True]
+    assert {outcome.result.balance_after for outcome in outcomes} == {5075}
+    with replica_one() as session:
+        assert get_balance(session, 1002).balance == 5075

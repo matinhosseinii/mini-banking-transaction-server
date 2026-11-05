@@ -1,17 +1,29 @@
 # Distributed Banking Platform
 
 Assignment 2 extends the banking system into a distributed platform. The
-current implementation has two independent banking shards, each with one API
-application and its own persistent PostgreSQL database.
+current implementation has two independent banking shards, two stateless API
+replicas per shard, and a shard-aware Gateway.
 
-| Shard | Canonical account IDs | Internal IDs | Direct API |
+| Shard | Canonical account IDs | Internal IDs | Replicas |
 |---|---|---|---|
-| A | `A0001`–`A1000` | 1–1000 | port 8001 |
-| B | `A1001`–`A2000` | 1001–2000 | port 8002 |
+| A | `A0001`–`A1000` | 1–1000 | `bank-a1`, `bank-a2` |
+| B | `A1001`–`A2000` | 1001–2000 | `bank-b1`, `bank-b2` |
 
 The authoritative mapping is stored in [`server/shard_map.json`](server/shard_map.json).
 Application instances enforce the same mapping before performing banking
 operations, while each database also has a local account-range constraint.
+Both replicas of a shard use the same authoritative PostgreSQL database.
+
+Clients send all requests to the Gateway on port 8000. Account-addressed
+requests are routed with the shared Shard Map. Healthy replicas are selected by
+independent per-shard in-memory round robin. Health checks periodically remove
+failed replicas and return recovered replicas to rotation. If a selected
+backend fails while handling a request, the Gateway returns 502 and does not
+retry the request, avoiding unsafe mutation replay.
+
+Account creation has no account ID to route. The Gateway hashes the required
+`Idempotency-Key` deterministically to A or B, so retries always reach the same
+shard without requiring the Client to know shard identities.
 
 ## Install dependencies
 
@@ -30,7 +42,8 @@ Create the local deployment configuration and set suitable development values:
 cp infra/standalone/.env.example infra/standalone/.env
 ```
 
-Then build and start both databases:
+Then build and start both databases, initialize them, and launch the complete
+deployment:
 
 ```sh
 docker compose --env-file infra/standalone/.env \
@@ -38,7 +51,7 @@ docker compose --env-file infra/standalone/.env \
 ./infra/standalone/scripts/migrate.sh
 ./infra/standalone/scripts/seed.sh
 docker compose --env-file infra/standalone/.env \
-  -f infra/standalone/compose.yaml up -d --wait bank-a bank-b
+  -f infra/standalone/compose.yaml up -d --build --wait
 ```
 
 The migration script applies the existing Alembic schema independently to both
@@ -47,11 +60,22 @@ identity sequence. The seed script is idempotent and creates three demo
 accounts in each shard. Named volumes `postgres-a-data` and `postgres-b-data`
 preserve balances across application container restarts.
 
-With `API_BIND_IP=127.0.0.1`, test the shards directly at
-`http://127.0.0.1:8001` and `http://127.0.0.1:8002`. For example, account 1 is
-valid only on port 8001 and account 1001 only on port 8002. The current HTTP API
-continues to use internal integer IDs; canonical `A0001` identifiers are
-supported by the reusable shard resolver for future Gateway routing.
+With `API_BIND_IP=127.0.0.1`, configure the Client's sole service URL as
+`http://127.0.0.1:8000`; it does not need replica or shard addresses. The
+current HTTP API continues to use internal integer IDs.
+
+Round-robin selection is visible in Gateway and banking replica logs. To
+demonstrate failover and recovery, stop and restart one replica while sending
+requests for its shard:
+
+```sh
+docker compose --env-file infra/standalone/.env \
+  -f infra/standalone/compose.yaml stop bank-a1
+docker compose --env-file infra/standalone/.env \
+  -f infra/standalone/compose.yaml start bank-a1
+```
+
+After the configured health interval, `bank-a1` rejoins Shard A's rotation.
 
 ## Run checks and tests
 
@@ -68,6 +92,6 @@ skipped.
 
 ## Current limitations
 
-The Gateway, multiple application replicas per shard, transfers, the
-Transaction Coordinator, and two-phase commit are not implemented yet. The two
-shard applications are exposed directly only for development and validation.
+Transfers, the Transaction Coordinator, and two-phase commit are not
+implemented yet. Request-history aggregation is limited to the first 100
+matching records from each shard per Gateway request.

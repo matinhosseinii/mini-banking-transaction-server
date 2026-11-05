@@ -1,56 +1,101 @@
-name: assignment2-shards
+name: assignment2-gateway
+
+x-bank-common: &bank-common
+  build:
+    context: ../..
+    dockerfile: server/Dockerfile
+  environment: &bank-environment
+    MAX_CONCURRENT_CLIENTS: ${MAX_CONCURRENT_CLIENTS:?MAX_CONCURRENT_CLIENTS is required}
+    LOG_LEVEL: ${LOG_LEVEL:?LOG_LEVEL is required}
+    UVICORN_LIMIT_CONCURRENCY: ${UVICORN_LIMIT_CONCURRENCY:-}
+  healthcheck:
+    test:
+      - CMD
+      - python
+      - -c
+      - >-
+        import urllib.request;
+        urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3).close()
+    interval: 60s
+    timeout: 5s
+    retries: 5
+    start_period: 10s
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+  networks:
+    - banking
 
 services:
-  bank-a:
-    build:
-      context: ../..
-      dockerfile: server/Dockerfile
+  bank-a1:
+    <<: *bank-common
     environment:
+      <<: *bank-environment
       DATABASE_URL: "postgresql+psycopg://${POSTGRES_A_USER:?POSTGRES_A_USER is required}:${POSTGRES_A_PASSWORD:?POSTGRES_A_PASSWORD is required}@postgres-a:5432/${POSTGRES_A_DB:?POSTGRES_A_DB is required}"
       SHARD_ID: A
-      MAX_CONCURRENT_CLIENTS: ${MAX_CONCURRENT_CLIENTS:?MAX_CONCURRENT_CLIENTS is required}
-      LOG_LEVEL: ${LOG_LEVEL:?LOG_LEVEL is required}
-      UVICORN_LIMIT_CONCURRENCY: ${UVICORN_LIMIT_CONCURRENCY:-}
-    ports:
-      - "${API_BIND_IP:?API_BIND_IP is required}:8001:8000"
+      REPLICA_ID: bank-a1
     depends_on:
       postgres-a:
         condition: service_healthy
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - >-
-          import urllib.request;
-          urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3).close()
-      interval: 150s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    networks:
-      - banking
 
-  bank-b:
-    build:
-      context: ../..
-      dockerfile: server/Dockerfile
+  bank-a2:
+    <<: *bank-common
     environment:
+      <<: *bank-environment
+      DATABASE_URL: "postgresql+psycopg://${POSTGRES_A_USER:?POSTGRES_A_USER is required}:${POSTGRES_A_PASSWORD:?POSTGRES_A_PASSWORD is required}@postgres-a:5432/${POSTGRES_A_DB:?POSTGRES_A_DB is required}"
+      SHARD_ID: A
+      REPLICA_ID: bank-a2
+    depends_on:
+      postgres-a:
+        condition: service_healthy
+
+  bank-b1:
+    <<: *bank-common
+    environment:
+      <<: *bank-environment
       DATABASE_URL: "postgresql+psycopg://${POSTGRES_B_USER:?POSTGRES_B_USER is required}:${POSTGRES_B_PASSWORD:?POSTGRES_B_PASSWORD is required}@postgres-b:5432/${POSTGRES_B_DB:?POSTGRES_B_DB is required}"
       SHARD_ID: B
-      MAX_CONCURRENT_CLIENTS: ${MAX_CONCURRENT_CLIENTS:?MAX_CONCURRENT_CLIENTS is required}
-      LOG_LEVEL: ${LOG_LEVEL:?LOG_LEVEL is required}
-      UVICORN_LIMIT_CONCURRENCY: ${UVICORN_LIMIT_CONCURRENCY:-}
-    ports:
-      - "${API_BIND_IP:?API_BIND_IP is required}:8002:8000"
+      REPLICA_ID: bank-b1
     depends_on:
       postgres-b:
+        condition: service_healthy
+
+  bank-b2:
+    <<: *bank-common
+    environment:
+      <<: *bank-environment
+      DATABASE_URL: "postgresql+psycopg://${POSTGRES_B_USER:?POSTGRES_B_USER is required}:${POSTGRES_B_PASSWORD:?POSTGRES_B_PASSWORD is required}@postgres-b:5432/${POSTGRES_B_DB:?POSTGRES_B_DB is required}"
+      SHARD_ID: B
+      REPLICA_ID: bank-b2
+    depends_on:
+      postgres-b:
+        condition: service_healthy
+
+  gateway:
+    build:
+      context: ../..
+      dockerfile: gateway/Dockerfile
+    environment:
+      BANK_A1_URL: http://bank-a1:8000
+      BANK_A2_URL: http://bank-a2:8000
+      BANK_B1_URL: http://bank-b1:8000
+      BANK_B2_URL: http://bank-b2:8000
+      GATEWAY_HEALTH_INTERVAL_SECONDS: ${GATEWAY_HEALTH_INTERVAL_SECONDS:-5}
+      GATEWAY_HEALTH_TIMEOUT_SECONDS: ${GATEWAY_HEALTH_TIMEOUT_SECONDS:-1}
+      LOG_LEVEL: ${LOG_LEVEL:?LOG_LEVEL is required}
+    ports:
+      - "${API_BIND_IP:?API_BIND_IP is required}:8000:8000"
+    depends_on:
+      bank-a1:
+        condition: service_healthy
+      bank-a2:
+        condition: service_healthy
+      bank-b1:
+        condition: service_healthy
+      bank-b2:
         condition: service_healthy
     healthcheck:
       test:
@@ -60,16 +105,11 @@ services:
         - >-
           import urllib.request;
           urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3).close()
-      interval: 150s
+      interval: 60s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 5s
     restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
     networks:
       - banking
 
@@ -85,7 +125,7 @@ services:
       test:
         - CMD-SHELL
         - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
-      interval: 5s
+      interval: 30s
       timeout: 5s
       retries: 5
       start_period: 10s
@@ -105,7 +145,7 @@ services:
       test:
         - CMD-SHELL
         - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
-      interval: 5s
+      interval: 30s
       timeout: 5s
       retries: 5
       start_period: 10s

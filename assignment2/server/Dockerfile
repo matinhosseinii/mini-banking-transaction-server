@@ -6,6 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Use Runflare Debian mirrors
+RUN sed -i \
+    -e 's|http://deb.debian.org/debian-security|http://mirror-linux.runflare.com/debian-security|g' \
+    -e 's|http://deb.debian.org/debian|http://mirror-linux.runflare.com/debian|g' \
+    /etc/apt/sources.list.d/debian.sources
 RUN apt-get update \
     && apt-get install --no-install-recommends -y libpq5 \
     && rm -rf /var/lib/apt/lists/* \
@@ -13,6 +18,7 @@ RUN apt-get update \
     && adduser --system --ingroup app --home /app app
 
 COPY server/requirements.txt /tmp/requirements.txt
+ARG PIP_INDEX_URL=https://pypi.org/simple/
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY --chown=app:app server/app /app/server/app

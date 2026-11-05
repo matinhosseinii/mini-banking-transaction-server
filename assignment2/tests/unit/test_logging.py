@@ -411,7 +411,7 @@ def test_compose_configures_rotation_only_for_applications() -> None:
     compose = Path("infra/standalone/compose.yaml").read_text()
 
     applications, database_section = compose.split("\n  postgres-a:\n", maxsplit=1)
-    assert applications.count("driver: json-file") == 2
-    assert applications.count('max-size: "10m"') == 2
-    assert applications.count('max-file: "3"') == 2
+    assert "driver: json-file" in applications
+    assert 'max-size: "10m"' in applications
+    assert 'max-file: "3"' in applications
     assert "driver: json-file" not in database_section

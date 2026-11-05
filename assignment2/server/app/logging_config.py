@@ -34,6 +34,8 @@ _STRUCTURED_FIELDS = (
     "replayed",
     "error_code",
     "exception_type",
+    "shard_id",
+    "replica_id",
 )
 
 

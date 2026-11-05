@@ -20,6 +20,7 @@ class Settings:
     max_concurrent_clients: int
     log_level: str
     shard_id: str = "A"
+    replica_id: str = "standalone"
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] | None = None) -> Settings:
@@ -35,6 +36,9 @@ class Settings:
         )
         log_level = _log_level(values.get("LOG_LEVEL", "INFO"))
         shard_id = values.get("SHARD_ID", "A").strip().upper()
+        replica_id = values.get("REPLICA_ID", "standalone").strip()
+        if not replica_id:
+            raise ConfigurationError("REPLICA_ID must be non-empty.")
         from server.app.sharding import ShardConfigurationError, get_shard
 
         try:
@@ -46,6 +50,7 @@ class Settings:
             max_concurrent_clients=max_concurrent_clients,
             log_level=log_level,
             shard_id=shard_id,
+            replica_id=replica_id,
         )
 
 

@@ -1,8 +1,7 @@
 {
-  "default_service": "standalone",
+  "default_service": "gateway",
   "services": {
-    "standalone": {"base_url": "http://server-a.example:8000"},
-    "ha": {"base_url": "http://witness-haproxy.example:PORT"}
+    "gateway": {"base_url": "http://gateway.example:8000"}
   },
   "pending_dir": "~/.mini-banking/pending",
   "timeouts": {"connect": 3, "read": 15, "write": 5, "pool": 3},
