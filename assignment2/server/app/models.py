@@ -178,3 +178,65 @@ class Request(Base):
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
     )
+
+
+class ParticipantTransaction(Base):
+    """Durable local state for one distributed transaction participant."""
+
+    __tablename__ = "participant_transactions"
+    __table_args__ = (
+        CheckConstraint(
+            "direction IN ('DEBIT', 'CREDIT')",
+            name="ck_participant_transactions_direction",
+        ),
+        CheckConstraint("amount > 0", name="ck_participant_transactions_amount"),
+        CheckConstraint(
+            "state IN ('PREPARING', 'COMMITTED', 'ABORTED', 'REJECTED')",
+            name="ck_participant_transactions_state",
+        ),
+        CheckConstraint(
+            "(state = 'REJECTED' AND error_code IS NOT NULL) OR "
+            "(state <> 'REJECTED' AND error_code IS NULL)",
+            name="ck_participant_transactions_error",
+        ),
+    )
+
+    transaction_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True
+    )
+    shard_id: Mapped[str] = mapped_column(String(10), nullable=False)
+    account_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    direction: Mapped[str] = mapped_column(String(10), nullable=False)
+    amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    gid: Mapped[str] = mapped_column(String(200), nullable=False, unique=True)
+    state: Mapped[str] = mapped_column(
+        String(12), nullable=False, server_default=text("'PREPARING'")
+    )
+    error_code: Mapped[str | None] = mapped_column(String(40))
+    balance_before: Mapped[int | None] = mapped_column(BigInteger)
+    balance_after: Mapped[int | None] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class ParticipantAbortDecision(Base):
+    """Durable abort tombstone written before resolving a prepared transaction."""
+
+    __tablename__ = "participant_abort_decisions"
+
+    transaction_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )

@@ -8,7 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Path, Query, Request, status
 from sqlalchemy.orm import Session, sessionmaker
 
-from server.app import banking, idempotency
+from server.app import banking, idempotency, participant
 from server.app.banking import OperationStatus
 from server.app.dependencies import get_local_shard, get_session_factory
 from server.app.errors import PROBLEM_MEDIA_TYPE, business_problem, problem_response
@@ -19,6 +19,9 @@ from server.app.schemas import (
     BalanceResponse,
     CreateAccountRequest,
     MutationResponse,
+    ParticipantDecisionRequest,
+    ParticipantPrepareRequest,
+    ParticipantResponse,
     ProblemDetails,
     RequestHistoryResponse,
     StoredRequestResponse,
@@ -44,6 +47,22 @@ PROBLEM_RESPONSES = {
 
 SessionFactory = Annotated[sessionmaker[Session], Depends(get_session_factory)]
 LocalShard = Annotated[ShardDefinition, Depends(get_local_shard)]
+
+
+def _participant_response(
+    result: participant.ParticipantResult,
+) -> ParticipantResponse:
+    return ParticipantResponse(
+        transaction_id=result.transaction_id,
+        state=result.state,
+        vote=result.vote,
+        account_id=result.account_id,
+        direction=result.direction,
+        amount=result.amount,
+        balance_before=result.balance_before,
+        balance_after=result.balance_after,
+        error_code=result.error_code,
+    )
 
 
 def _require_local_owner(shard: ShardDefinition, account_id: int) -> None:
@@ -285,4 +304,59 @@ def get_requests(
         total=page.total,
         limit=limit,
         offset=offset,
+    )
+
+
+@router.post("/internal/2pc/prepare", response_model=ParticipantResponse)
+def prepare_participant(
+    body: ParticipantPrepareRequest,
+    session_factory: SessionFactory,
+    shard: LocalShard,
+) -> ParticipantResponse:
+    """Prepare one internal shard-local 2PC participant transaction."""
+    return _participant_response(
+        participant.prepare(
+            session_factory,
+            shard,
+            body.transaction_id,
+            body.account_id,
+            body.direction,
+            body.amount,
+        )
+    )
+
+
+@router.post("/internal/2pc/commit", response_model=ParticipantResponse)
+def commit_participant(
+    body: ParticipantDecisionRequest,
+    session_factory: SessionFactory,
+    shard: LocalShard,
+) -> ParticipantResponse:
+    """Commit one prepared internal participant transaction."""
+    return _participant_response(
+        participant.commit(session_factory, shard, body.transaction_id)
+    )
+
+
+@router.post("/internal/2pc/abort", response_model=ParticipantResponse)
+def abort_participant(
+    body: ParticipantDecisionRequest,
+    session_factory: SessionFactory,
+    shard: LocalShard,
+) -> ParticipantResponse:
+    """Abort one prepared internal participant transaction."""
+    return _participant_response(
+        participant.abort(session_factory, shard, body.transaction_id)
+    )
+
+
+@router.get("/internal/2pc/{transaction_id}", response_model=ParticipantResponse)
+def get_participant(
+    transaction_id: UUID,
+    session_factory: SessionFactory,
+    shard: LocalShard,
+) -> ParticipantResponse:
+    """Look up one durable internal participant outcome."""
+    return _participant_response(
+        participant.lookup(session_factory, shard, transaction_id)
     )

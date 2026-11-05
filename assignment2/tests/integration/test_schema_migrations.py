@@ -152,20 +152,27 @@ def _request_values(**overrides: object) -> dict[str, object]:
     return values
 
 
-def test_upgrade_creates_exactly_two_application_tables(migrated_database) -> None:
+def test_upgrade_creates_all_application_tables(migrated_database) -> None:
     engine, _ = migrated_database
 
     application_tables = set(inspect(engine).get_table_names()) - {"alembic_version"}
 
-    assert application_tables == {"accounts", "requests"}
+    assert application_tables == {
+        "accounts",
+        "participant_abort_decisions",
+        "participant_transactions",
+        "requests",
+    }
 
 
-def test_downgrade_removes_both_application_tables(migrated_database) -> None:
+def test_downgrade_removes_all_application_tables(migrated_database) -> None:
     engine, alembic_config = migrated_database
     engine.dispose()
     command.downgrade(alembic_config, "base")
     try:
         assert "accounts" not in inspect(engine).get_table_names()
+        assert "participant_abort_decisions" not in inspect(engine).get_table_names()
+        assert "participant_transactions" not in inspect(engine).get_table_names()
         assert "requests" not in inspect(engine).get_table_names()
     finally:
         command.upgrade(alembic_config, "head")

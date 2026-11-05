@@ -115,6 +115,7 @@ services:
 
   postgres-a:
     image: postgres:17
+    command: ["postgres", "-c", "max_prepared_transactions=20"]
     environment:
       POSTGRES_DB: ${POSTGRES_A_DB:?POSTGRES_A_DB is required}
       POSTGRES_USER: ${POSTGRES_A_USER:?POSTGRES_A_USER is required}
@@ -135,6 +136,7 @@ services:
 
   postgres-b:
     image: postgres:17
+    command: ["postgres", "-c", "max_prepared_transactions=20"]
     environment:
       POSTGRES_DB: ${POSTGRES_B_DB:?POSTGRES_B_DB is required}
       POSTGRES_USER: ${POSTGRES_B_USER:?POSTGRES_B_USER is required}

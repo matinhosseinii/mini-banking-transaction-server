@@ -25,4 +25,5 @@ def test_compose_defines_four_replicas_gateway_and_persistent_databases() -> Non
     assert "@postgres-b:5432/" in compose
     assert compose.count("SHARD_ID: A") == 2
     assert compose.count("SHARD_ID: B") == 2
+    assert compose.count("max_prepared_transactions=20") == 2
     assert '"${API_BIND_IP:?API_BIND_IP is required}:8000:8000"' in compose

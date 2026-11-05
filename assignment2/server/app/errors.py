@@ -15,6 +15,7 @@ from starlette.exceptions import HTTPException
 
 from server.app.banking import BankingValidationError, BusinessErrorCode
 from server.app.idempotency import CoordinatedResult, IdempotencyConflict
+from server.app.participant import ParticipantConflict
 from server.app.sharding import InvalidAccountId, WrongShardError
 
 logger = logging.getLogger(__name__)
@@ -124,6 +125,17 @@ def register_exception_handlers(app: FastAPI) -> None:
             "The Idempotency-Key was already used for a different request.",
             error_code="IDEMPOTENCY_CONFLICT",
             request_id=str(error.request_id),
+        )
+
+    @app.exception_handler(ParticipantConflict)
+    async def participant_conflict_handler(
+        request: Request, error: ParticipantConflict
+    ) -> JSONResponse:
+        request.state.log_classification = "participant_conflict"
+        return problem_response(
+            409,
+            str(error),
+            error_code="PARTICIPANT_CONFLICT",
         )
 
     @app.exception_handler(HTTPException)

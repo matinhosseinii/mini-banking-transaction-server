@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_v
 
 from server.app.banking import AccountStatus, BusinessErrorCode, OperationStatus
 from server.app.idempotency import Operation
+from server.app.participant import Direction, ParticipantState
 
 PositiveInteger = Annotated[StrictInt, Field(gt=0)]
 
@@ -46,6 +47,39 @@ class TransferRequest(BaseModel):
     source_account_id: PositiveInteger
     destination_account_id: PositiveInteger
     amount: PositiveInteger
+
+
+class ParticipantPrepareRequest(BaseModel):
+    """Internal request to prepare one shard-local balance change."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    transaction_id: UUID
+    account_id: PositiveInteger
+    direction: Direction
+    amount: PositiveInteger
+
+
+class ParticipantDecisionRequest(BaseModel):
+    """Internal commit or abort decision for a distributed transaction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    transaction_id: UUID
+
+
+class ParticipantResponse(BaseModel):
+    """Durable state observed by a transaction coordinator."""
+
+    transaction_id: UUID
+    state: ParticipantState
+    vote: StrictStr
+    account_id: int | None = None
+    direction: Direction | None = None
+    amount: int | None = None
+    balance_before: int | None = None
+    balance_after: int | None = None
+    error_code: str | None = None
 
 
 class StoredRequestResponse(BaseModel):

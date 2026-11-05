@@ -41,8 +41,35 @@ The Client exposes the same operation through the Gateway:
 ```
 
 Transfers between Shards A and B return
-`CROSS_SHARD_TRANSFER_NOT_SUPPORTED`; cross-shard coordination and 2PC remain
-for later commits.
+`CROSS_SHARD_TRANSFER_NOT_SUPPORTED`; public cross-shard coordination remains
+for a later commit.
+
+## Durable 2PC participants
+
+Each Banking Server now exposes an internal participant API on the Compose
+network:
+
+- `POST /internal/2pc/prepare`
+- `POST /internal/2pc/commit`
+- `POST /internal/2pc/abort`
+- `GET /internal/2pc/{transaction_id}`
+
+PREPARE validates shard ownership and the active account, locks the account
+row, applies one local `DEBIT` or `CREDIT`, and uses PostgreSQL `PREPARE
+TRANSACTION`. The change and its row lock remain pending until COMMIT or ABORT.
+These endpoints trust callers on the private Compose network; they are not
+routed by the public Gateway and the banking replicas have no published host
+ports.
+
+The `participant_transactions` table records the transaction UUID, exact
+payload, shard-specific prepared-transaction GID, and durable outcome marker.
+A small `participant_abort_decisions` tombstone is written before rollback so
+a crash cannot allow an aborted transaction to be prepared again. Identical
+PREPARE, COMMIT, and ABORT messages are safe to repeat. Reusing a UUID with a
+different payload is rejected. The balance change and `COMMITTED` marker become
+visible atomically through `COMMIT PREPARED`; unresolved or ambiguous database
+outcomes are reported as `UNKNOWN` rather than guessed. This state is shared by
+both replicas of a shard and survives application restarts.
 
 ## Install dependencies
 
@@ -79,6 +106,10 @@ identity sequence. The seed script is idempotent and creates three demo
 accounts in each shard. Named volumes `postgres-a-data` and `postgres-b-data`
 preserve balances across application container restarts.
 
+Both PostgreSQL services start with `max_prepared_transactions=20`. Changing
+that server setting requires restarting the PostgreSQL containers, but does
+not require deleting or recreating their persistent volumes.
+
 With `API_BIND_IP=127.0.0.1`, configure the Client's sole service URL as
 `http://127.0.0.1:8000`; it does not need replica or shard addresses. The
 current HTTP API continues to use internal integer IDs.
@@ -109,8 +140,17 @@ Database-backed integration tests require `TEST_POSTGRES_ADMIN_URL` to point to
 an available PostgreSQL administrative database. Without it, those tests are
 skipped.
 
+The focused participant tests also require that PostgreSQL instance to have a
+nonzero `max_prepared_transactions` value:
+
+```sh
+TEST_POSTGRES_ADMIN_URL=postgresql+psycopg://... \
+  .venv/bin/python -m pytest tests/integration/test_participant.py -q
+```
+
 ## Current limitations
 
-Cross-shard transfers, the Transaction Coordinator, and two-phase commit are
-not implemented yet. Request-history aggregation is limited to the first 100
-matching records from each shard per Gateway request.
+The Transaction Coordinator and public cross-shard transfer orchestration are
+not implemented yet; the current release provides participant primitives only
+and is not a complete distributed 2PC system. Request-history aggregation is
+limited to the first 100 matching records from each shard per Gateway request.

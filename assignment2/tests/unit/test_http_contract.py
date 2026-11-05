@@ -16,6 +16,7 @@ from server.app.banking import BusinessErrorCode, OperationStatus
 from server.app.dependencies import get_local_shard
 from server.app.idempotency import CoordinatedResult, Operation, RequestResult
 from server.app.main import app, get_session_factory
+from server.app.participant import Direction, ParticipantResult, ParticipantState
 from server.app.sharding import get_shard
 
 
@@ -165,6 +166,47 @@ def test_insufficient_funds_is_meaningful_problem(client, monkeypatch) -> None:
     assert response.headers["content-type"] == "application/problem+json"
     assert response.json()["error_code"] == "INSUFFICIENT_FUNDS"
     assert response.json()["detail"] == "Insufficient funds."
+
+
+def test_internal_participant_prepare_returns_consistent_state(
+    client, monkeypatch
+) -> None:
+    transaction_id = uuid4()
+    monkeypatch.setattr(
+        "server.app.routes.participant.prepare",
+        lambda *args: ParticipantResult(
+            transaction_id=transaction_id,
+            state=ParticipantState.PREPARED,
+            account_id=7,
+            direction=Direction.DEBIT,
+            amount=10,
+            balance_before=100,
+            balance_after=90,
+        ),
+    )
+
+    response = client.post(
+        "/internal/2pc/prepare",
+        json={
+            "transaction_id": str(transaction_id),
+            "account_id": 7,
+            "direction": "DEBIT",
+            "amount": 10,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "transaction_id": str(transaction_id),
+        "state": "PREPARED",
+        "vote": "YES",
+        "account_id": 7,
+        "direction": "DEBIT",
+        "amount": 10,
+        "balance_before": 100,
+        "balance_after": 90,
+        "error_code": None,
+    }
 
 
 @pytest.mark.parametrize(
