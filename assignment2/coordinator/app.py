@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -19,6 +21,7 @@ from coordinator.config import Settings
 from coordinator.service import Coordinator, CoordinatorConflict, TransferOutcome
 
 PositiveInt = Annotated[StrictInt, Field(gt=0)]
+logger = logging.getLogger(__name__)
 
 
 class TransferRequest(BaseModel):
@@ -46,7 +49,26 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     settings = Settings.from_environment()
     engine = create_engine(settings.database_url, pool_pre_ping=True)
     client = httpx.Client(follow_redirects=False, timeout=5)
-    coordinator = Coordinator(engine, settings.shard_urls, client)
+
+    def after_commit(transaction_id: UUID) -> None:
+        if transaction_id != settings.crash_after_commit_transaction_id:
+            return
+        logger.critical(
+            "Experiment fault: exiting after durable COMMIT",
+            extra={"transaction_id": str(transaction_id)},
+        )
+        os._exit(86)
+
+    coordinator = Coordinator(
+        engine,
+        settings.shard_urls,
+        client,
+        after_commit_hook=(
+            after_commit
+            if settings.crash_after_commit_transaction_id is not None
+            else None
+        ),
+    )
     application.state.engine = engine
     application.state.coordinator = coordinator
 

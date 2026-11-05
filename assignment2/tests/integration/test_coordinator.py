@@ -7,14 +7,16 @@ import os
 from collections.abc import Generator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from typing import NoReturn
 from uuid import uuid4
 
 import httpx
 import pytest
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.engine import make_url
+from sqlalchemy.orm import Session
 
-from coordinator.models import Base
+from coordinator.models import Base, CoordinatedTransfer
 from coordinator.service import Coordinator, CoordinatorConflict
 
 
@@ -100,12 +102,17 @@ class Participants:
         )
 
 
-def _coordinator(engine: Engine, participants: Participants) -> Coordinator:
+def _coordinator(
+    engine: Engine,
+    participants: Participants,
+    after_commit_hook=None,
+) -> Coordinator:
     client = httpx.Client(transport=httpx.MockTransport(participants))
     return Coordinator(
         engine,
         {"A": ("http://a1", "http://a2"), "B": ("http://b1", "http://b2")},
         client,
+        after_commit_hook=after_commit_hook,
     )
 
 
@@ -149,6 +156,31 @@ def test_concurrent_duplicate_uses_one_prepare_pair(coordinator_engine) -> None:
     assert participants.prepare_calls == 2
 
 
+def test_concurrent_overlapping_cross_shard_transactions_resolve(
+    coordinator_engine,
+) -> None:
+    participants = Participants()
+    coordinator = _coordinator(coordinator_engine, participants)
+    transaction_ids = [uuid4() for _ in range(10)]
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        outcomes = list(
+            executor.map(
+                lambda transaction_id: coordinator.transfer(transaction_id, 6, 1006, 1),
+                transaction_ids,
+            )
+        )
+
+    assert all(outcome.state == "RESOLVED" for outcome in outcomes)
+    assert all(outcome.decision == "COMMIT" for outcome in outcomes)
+    assert participants.prepare_calls == 20
+    assert all(
+        participants.states[(shard, str(transaction_id))]["state"] == "COMMITTED"
+        for transaction_id in transaction_ids
+        for shard in ("A", "B")
+    )
+
+
 def test_rejected_prepare_durably_aborts_without_credit(coordinator_engine) -> None:
     participants = Participants()
     participants.insufficient = True
@@ -177,3 +209,39 @@ def test_durable_commit_recovers_when_participant_returns(coordinator_engine) ->
     assert recovered is not None
     assert recovered.state == "RESOLVED"
     assert recovered.decision == "COMMIT"
+
+
+def test_crash_after_durable_commit_recovers_same_transaction(
+    coordinator_engine,
+) -> None:
+    class InjectedCrash(RuntimeError):
+        pass
+
+    participants = Participants()
+    transaction_id = uuid4()
+
+    def interrupt(committed_id) -> NoReturn:
+        assert committed_id == transaction_id
+        raise InjectedCrash
+
+    interrupted = _coordinator(coordinator_engine, participants, interrupt)
+    with pytest.raises(InjectedCrash):
+        interrupted.transfer(transaction_id, 5, 1005, 10)
+
+    with Session(coordinator_engine) as session:
+        durable = session.get(CoordinatedTransfer, transaction_id)
+    assert durable is not None
+    assert durable.decision == "COMMIT"
+    assert durable.state == "DECIDED"
+    assert participants.states[("A", str(transaction_id))]["state"] == "PREPARED"
+    assert participants.states[("B", str(transaction_id))]["state"] == "PREPARED"
+
+    restarted = _coordinator(coordinator_engine, participants)
+    restarted.recover()
+    recovered = restarted.lookup(transaction_id)
+    assert recovered is not None
+    assert recovered.transaction_id == transaction_id
+    assert recovered.decision == "COMMIT"
+    assert recovered.state == "RESOLVED"
+    assert participants.states[("A", str(transaction_id))]["state"] == "COMMITTED"
+    assert participants.states[("B", str(transaction_id))]["state"] == "COMMITTED"

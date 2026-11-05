@@ -160,6 +160,14 @@ docker compose --env-file infra/standalone/.env \
 
 After the configured health interval, `bank-a1` rejoins Shard A's rotation.
 
+## Required experiments
+
+The seven mandatory distributed-systems experiments, including the gated
+post-COMMIT Coordinator interruption and concurrent cross-shard workload, are
+documented in [`docs/required-experiments.md`](docs/required-experiments.md).
+The fault-injection environment variable is empty by default and should only
+be set to the single UUID used for that isolated experiment.
+
 ## Run checks and tests
 
 ```sh

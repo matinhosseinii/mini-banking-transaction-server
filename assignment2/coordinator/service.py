@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
@@ -45,11 +46,13 @@ class Coordinator:
         engine: Engine,
         shard_urls: dict[str, tuple[str, ...]],
         client: httpx.Client,
+        after_commit_hook: Callable[[UUID], None] | None = None,
     ) -> None:
         self.engine = engine
         self.sessions = sessionmaker(bind=engine, expire_on_commit=False)
         self.shard_urls = shard_urls
         self.client = client
+        self.after_commit_hook = after_commit_hook
 
     def transfer(
         self,
@@ -187,6 +190,8 @@ class Coordinator:
                 or ("DISTRIBUTED_TRANSFER_ABORTED" if decision == "ABORT" else None)
             )
             self._decide(item.transaction_id, decision, error_code)
+            if decision == "COMMIT" and self.after_commit_hook is not None:
+                self.after_commit_hook(item.transaction_id)
 
         item = self._load(item.transaction_id)
         action = "commit" if item.decision == "COMMIT" else "abort"
