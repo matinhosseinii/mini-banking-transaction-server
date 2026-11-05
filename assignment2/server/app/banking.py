@@ -10,7 +10,11 @@ from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
 
 from server.app.models import Account
-from server.app.sharding import SHARD_INITIALIZATION_LOCK, ShardDefinition
+from server.app.sharding import (
+    SHARD_INITIALIZATION_LOCK,
+    InvalidAccountId,
+    ShardDefinition,
+)
 
 
 class OperationStatus(StrEnum):
@@ -181,6 +185,57 @@ def withdraw(session: Session, account_id: int, amount: int) -> MutationResult:
     return _succeeded(account.id, balance_before, balance_after)
 
 
+def transfer(
+    session: Session,
+    source_account_id: int,
+    destination_account_id: int,
+    amount: int,
+    shard: ShardDefinition | None = None,
+) -> MutationResult:
+    """Atomically move funds between two active accounts in one shard."""
+    _validate_amount(amount)
+    if source_account_id == destination_account_id:
+        raise BankingValidationError("Transfer accounts must be different.")
+    if shard is not None:
+        _require_transfer_owner(shard, source_account_id)
+        _require_transfer_owner(shard, destination_account_id)
+
+    statement = (
+        select(Account)
+        .where(Account.id.in_((source_account_id, destination_account_id)))
+        .order_by(Account.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    accounts = {account.id: account for account in session.scalars(statement)}
+    source = accounts.get(source_account_id)
+    destination = accounts.get(destination_account_id)
+    if source is None or destination is None:
+        return _not_found()
+
+    balance_before = source.balance
+    if (
+        source.status == AccountStatus.CLOSED
+        or destination.status == AccountStatus.CLOSED
+    ):
+        return _rejected(
+            source.id,
+            balance_before,
+            BusinessErrorCode.ACCOUNT_ALREADY_CLOSED,
+        )
+    if balance_before < amount:
+        return _rejected(
+            source.id,
+            balance_before,
+            BusinessErrorCode.INSUFFICIENT_FUNDS,
+        )
+
+    source.balance -= amount
+    destination.balance += amount
+    session.flush()
+    return _succeeded(source.id, balance_before, source.balance)
+
+
 def get_balance(session: Session, account_id: int) -> BalanceResult:
     """Return the current state of an active or closed account."""
     row = session.execute(
@@ -215,6 +270,14 @@ def _locked_account(session: Session, account_id: int) -> Account | None:
 def _validate_amount(amount: int) -> None:
     if isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:
         raise BankingValidationError("Amount must be a positive integer.")
+
+
+def _require_transfer_owner(shard: ShardDefinition, account_id: int) -> None:
+    try:
+        shard.require_owner(account_id)
+    except InvalidAccountId:
+        # Preserve durable ACCOUNT_NOT_FOUND behavior for unsupported positive IDs.
+        return
 
 
 def _not_found() -> MutationResult:

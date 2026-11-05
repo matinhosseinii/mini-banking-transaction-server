@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from server.app.banking import (
     AccountStatus,
+    BankingValidationError,
     BusinessErrorCode,
     MutationResult,
     OperationStatus,
@@ -26,6 +27,7 @@ from server.app.banking import (
     create_account,
     deposit,
     get_balance,
+    transfer,
     withdraw,
 )
 from server.app.models import Account, Request
@@ -356,3 +358,91 @@ def test_banking_service_does_not_create_request_records(banking_engine) -> None
         request_count = session.scalar(select(func.count()).select_from(Request))
 
     assert request_count == 0
+
+
+def test_same_shard_transfer_is_atomic_and_conserves_money(banking_engine) -> None:
+    source = _create_committed_account(banking_engine, "Transfer source")
+    destination = _create_committed_account(banking_engine, "Transfer destination")
+    _deposit_committed(banking_engine, source, 100)
+
+    with _sessions(banking_engine).begin() as session:
+        result = transfer(session, source, destination, 40)
+
+    assert result.status is OperationStatus.SUCCEEDED
+    assert (result.balance_before, result.balance_after) == (100, 60)
+    with _sessions(banking_engine)() as session:
+        balances = [
+            get_balance(session, source).balance,
+            get_balance(session, destination).balance,
+        ]
+    assert balances == [60, 40]
+    assert sum(balances) == 100
+
+
+def test_rejected_transfer_changes_neither_account(banking_engine) -> None:
+    source = _create_committed_account(banking_engine, "Rejected transfer source")
+    destination = _create_committed_account(
+        banking_engine, "Rejected transfer destination"
+    )
+    _deposit_committed(banking_engine, source, 5)
+
+    with _sessions(banking_engine).begin() as session:
+        result = transfer(session, source, destination, 6)
+
+    assert result.error_code is BusinessErrorCode.INSUFFICIENT_FUNDS
+    with _sessions(banking_engine)() as session:
+        assert get_balance(session, source).balance == 5
+        assert get_balance(session, destination).balance == 0
+
+
+def test_transfer_rejects_missing_closed_and_same_accounts(banking_engine) -> None:
+    source = _create_committed_account(banking_engine, "Transfer validation source")
+    closed = _create_committed_account(banking_engine, "Closed transfer destination")
+    with _sessions(banking_engine).begin() as session:
+        close_account(session, closed)
+        missing = transfer(session, source, 2**63 - 1, 1)
+        closed_result = transfer(session, source, closed, 1)
+    assert missing.error_code is BusinessErrorCode.ACCOUNT_NOT_FOUND
+    assert closed_result.error_code is BusinessErrorCode.ACCOUNT_ALREADY_CLOSED
+    with (
+        pytest.raises(BankingValidationError),
+        _sessions(banking_engine).begin() as session,
+    ):
+        transfer(session, source, source, 1)
+
+
+def test_transfer_rolls_back_with_caller_transaction(banking_engine) -> None:
+    source = _create_committed_account(banking_engine, "Rollback transfer source")
+    destination = _create_committed_account(
+        banking_engine, "Rollback transfer destination"
+    )
+    _deposit_committed(banking_engine, source, 20)
+    session_factory = _sessions(banking_engine)
+    with session_factory() as session:
+        transaction = session.begin()
+        transfer(session, source, destination, 10)
+        transaction.rollback()
+    with session_factory() as session:
+        assert get_balance(session, source).balance == 20
+        assert get_balance(session, destination).balance == 0
+
+
+def test_concurrent_overlapping_transfers_preserve_total(banking_engine) -> None:
+    first = _create_committed_account(banking_engine, "Concurrent transfer first")
+    second = _create_committed_account(banking_engine, "Concurrent transfer second")
+    _deposit_committed(banking_engine, first, 100)
+    _deposit_committed(banking_engine, second, 100)
+    operations = [
+        lambda session: transfer(session, first, second, 1),
+        lambda session: transfer(session, second, first, 1),
+    ] * 5
+
+    results = _run_concurrently(banking_engine, operations)
+
+    assert all(result.status is OperationStatus.SUCCEEDED for result in results)
+    with _sessions(banking_engine)() as session:
+        balances = (
+            get_balance(session, first).balance,
+            get_balance(session, second).balance,
+        )
+    assert balances == (100, 100)

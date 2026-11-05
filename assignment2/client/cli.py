@@ -62,6 +62,11 @@ def build_parser() -> argparse.ArgumentParser:
     close = commands.add_parser("close-account")
     close.add_argument("--account-id", required=True, type=_positive_int)
     _request_id(close)
+    transfer = commands.add_parser("transfer")
+    transfer.add_argument("--source-account-id", required=True, type=_positive_int)
+    transfer.add_argument("--destination-account-id", required=True, type=_positive_int)
+    transfer.add_argument("--amount", required=True, type=_positive_int)
+    _request_id(transfer)
 
     request = commands.add_parser("request")
     request_commands = request.add_subparsers(dest="request_command", required=True)
@@ -72,7 +77,13 @@ def build_parser() -> argparse.ArgumentParser:
     request_list.add_argument("--status", choices=("SUCCEEDED", "REJECTED"))
     request_list.add_argument(
         "--operation",
-        choices=("CREATE_ACCOUNT", "CLOSE_ACCOUNT", "DEPOSIT", "WITHDRAW"),
+        choices=(
+            "CREATE_ACCOUNT",
+            "CLOSE_ACCOUNT",
+            "DEPOSIT",
+            "WITHDRAW",
+            "TRANSFER",
+        ),
     )
     request_list.add_argument("--limit", type=_limit, default=50)
     request_list.add_argument("--offset", type=_nonnegative_int, default=0)
@@ -115,7 +126,13 @@ def _execute(args: argparse.Namespace, config: ClientConfig) -> ExitCode:
     if args.command == "pending":
         return _pending_command(args, config)
     service, base_url = config.base_url(args.service)
-    if args.command in {"create-account", "deposit", "withdraw", "close-account"}:
+    if args.command in {
+        "create-account",
+        "deposit",
+        "withdraw",
+        "close-account",
+        "transfer",
+    }:
         pending = _new_pending(args, service)
         store = PendingStore(config.pending_dir)
         with store.locked():
@@ -145,6 +162,17 @@ def _new_pending(args: argparse.Namespace, service: str) -> PendingRequest:
             "DELETE",
             f"/accounts/{args.account_id}",
             None,
+        )
+    elif args.command == "transfer":
+        operation, method, path, payload = (
+            "TRANSFER",
+            "POST",
+            "/transfers",
+            {
+                "source_account_id": args.source_account_id,
+                "destination_account_id": args.destination_account_id,
+                "amount": args.amount,
+            },
         )
     else:
         operation = args.command.upper()

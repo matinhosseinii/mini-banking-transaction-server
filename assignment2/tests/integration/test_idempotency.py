@@ -30,6 +30,7 @@ from server.app.idempotency import (
     coordinate_close_account,
     coordinate_create_account,
     coordinate_deposit,
+    coordinate_transfer,
     coordinate_withdraw,
     lookup_request,
 )
@@ -431,3 +432,60 @@ def test_coordinator_persists_only_final_request_rows(idempotency_database) -> N
         statuses = set(session.scalars(select(Request.status)))
 
     assert statuses == {OperationStatus.SUCCEEDED, OperationStatus.REJECTED}
+
+
+def test_transfer_replay_and_payload_conflict(idempotency_database) -> None:
+    _, session_factory = idempotency_database
+    source, _ = _create_account(session_factory, f"Transfer source {uuid4()}")
+    destination, _ = _create_account(session_factory, f"Transfer destination {uuid4()}")
+    coordinate_deposit(session_factory, uuid4(), source, 100)
+    request_id = uuid4()
+
+    first = coordinate_transfer(session_factory, request_id, source, destination, 25)
+    replay = coordinate_transfer(session_factory, request_id, source, destination, 25)
+
+    assert replay.replayed is True
+    assert replay.result == first.result
+    assert (
+        _balance(session_factory, source),
+        _balance(session_factory, destination),
+    ) == (
+        75,
+        25,
+    )
+    with pytest.raises(IdempotencyConflict):
+        coordinate_transfer(session_factory, request_id, source, destination, 26)
+
+
+def test_concurrent_duplicate_transfer_across_replicas_executes_once(
+    idempotency_database,
+) -> None:
+    engine, session_factory = idempotency_database
+    other_replica = sessionmaker(bind=engine, expire_on_commit=False)
+    source, _ = _create_account(session_factory, f"Replica transfer source {uuid4()}")
+    destination, _ = _create_account(
+        session_factory, f"Replica transfer destination {uuid4()}"
+    )
+    coordinate_deposit(session_factory, uuid4(), source, 50)
+    request_id = uuid4()
+
+    results = _run_concurrently(
+        [
+            lambda: coordinate_transfer(
+                session_factory, request_id, source, destination, 20
+            ),
+            lambda: coordinate_transfer(
+                other_replica, request_id, source, destination, 20
+            ),
+        ]
+    )
+
+    outcomes = [result for result in results if isinstance(result, CoordinatedResult)]
+    assert sorted(outcome.replayed for outcome in outcomes) == [False, True]
+    assert (
+        _balance(session_factory, source),
+        _balance(session_factory, destination),
+    ) == (
+        30,
+        20,
+    )

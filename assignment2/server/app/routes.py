@@ -22,6 +22,7 @@ from server.app.schemas import (
     ProblemDetails,
     RequestHistoryResponse,
     StoredRequestResponse,
+    TransferRequest,
 )
 from server.app.sharding import InvalidAccountId, ShardDefinition
 
@@ -200,6 +201,33 @@ def withdraw(
         request,
         idempotency.coordinate_withdraw(
             session_factory, request_id, account_id, body.amount
+        ),
+    )
+
+
+@router.post(
+    "/transfers",
+    response_model=MutationResponse,
+    responses=PROBLEM_RESPONSES,
+)
+def transfer(
+    request: Request,
+    body: TransferRequest,
+    request_id: IdempotencyKey,
+    session_factory: SessionFactory,
+    shard: LocalShard,
+) -> MutationResponse | object:
+    _require_local_owner(shard, body.source_account_id)
+    _require_local_owner(shard, body.destination_account_id)
+    return _mutation_response(
+        request,
+        idempotency.coordinate_transfer(
+            session_factory,
+            request_id,
+            body.source_account_id,
+            body.destination_account_id,
+            body.amount,
+            shard,
         ),
     )
 

@@ -38,6 +38,16 @@ class AmountRequest(BaseModel):
     amount: PositiveInteger
 
 
+class TransferRequest(BaseModel):
+    """Input accepted for one same-shard transfer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_account_id: PositiveInteger
+    destination_account_id: PositiveInteger
+    amount: PositiveInteger
+
+
 class StoredRequestResponse(BaseModel):
     """Public representation of a durable request outcome."""
 

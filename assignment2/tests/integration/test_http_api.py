@@ -266,7 +266,7 @@ def test_data_persists_across_application_client_and_engine_restart(
         {"offset": -1},
         {"account_id": 0},
         {"status": "PENDING"},
-        {"operation": "TRANSFER"},
+        {"operation": "UNKNOWN"},
     ],
 )
 def test_invalid_history_filters_are_problem_details(client, params) -> None:
@@ -274,3 +274,30 @@ def test_invalid_history_filters_are_problem_details(client, params) -> None:
 
     assert response.status_code == 422
     assert response.headers["content-type"] == "application/problem+json"
+
+
+def test_same_shard_transfer_http_contract(client) -> None:
+    source = _mutate(client, "POST", "/accounts", {"name": "HTTP transfer source"})
+    destination = _mutate(
+        client, "POST", "/accounts", {"name": "HTTP transfer destination"}
+    )
+    source_id = source.json()["account_id"]
+    destination_id = destination.json()["account_id"]
+    _mutate(client, "POST", f"/accounts/{source_id}/deposit", {"amount": 80})
+
+    transferred = _mutate(
+        client,
+        "POST",
+        "/transfers",
+        {
+            "source_account_id": source_id,
+            "destination_account_id": destination_id,
+            "amount": 30,
+        },
+    )
+
+    assert transferred.status_code == 200
+    assert transferred.json()["operation"] == "TRANSFER"
+    assert transferred.json()["balance_after"] == 50
+    assert client.get(f"/accounts/{source_id}/balance").json()["balance"] == 50
+    assert client.get(f"/accounts/{destination_id}/balance").json()["balance"] == 30

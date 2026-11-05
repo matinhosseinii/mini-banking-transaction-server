@@ -98,8 +98,52 @@ async def account_operation(request: Request, account_id: int) -> Response:
     try:
         shard_id = resolve_shard(account_id).shard_id
     except InvalidAccountId:
-        return _not_found()
+        if account_id <= 0:
+            return _validation_problem("Account ID must be positive.")
+        shard_id = _compatibility_shard(account_id)
     return await _forward(request, shard_id)
+
+
+@app.post("/transfers")
+async def transfer(request: Request) -> Response:
+    try:
+        document = json.loads(await request.body())
+        source_id = document["source_account_id"]
+        destination_id = document["destination_account_id"]
+        if (
+            isinstance(source_id, bool)
+            or not isinstance(source_id, int)
+            or source_id <= 0
+            or isinstance(destination_id, bool)
+            or not isinstance(destination_id, int)
+            or destination_id <= 0
+        ):
+            raise ValueError
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return _validation_problem("Transfer account IDs must be positive integers.")
+
+    try:
+        source_shard = resolve_shard(source_id).shard_id
+        source_is_supported = True
+    except InvalidAccountId:
+        source_shard = _compatibility_shard(source_id)
+        source_is_supported = False
+    try:
+        destination_shard = resolve_shard(destination_id).shard_id
+        destination_is_supported = True
+    except InvalidAccountId:
+        destination_shard = source_shard
+        destination_is_supported = False
+    if (
+        source_is_supported
+        and destination_is_supported
+        and source_shard != destination_shard
+    ):
+        return _validation_problem(
+            "Cross-shard transfers are not implemented.",
+            error_code="CROSS_SHARD_TRANSFER_NOT_SUPPORTED",
+        )
+    return await _forward(request, source_shard)
 
 
 @app.get("/requests/{request_id}")
@@ -251,6 +295,12 @@ def _creation_shard(request_id: UUID) -> str:
     return ("A", "B")[digest[0] % 2]
 
 
+def _compatibility_shard(account_id: int) -> str:
+    """Route unsupported positive IDs consistently for durable 404 replay."""
+    digest = hashlib.sha256(str(account_id).encode("ascii")).digest()
+    return ("A", "B")[digest[0] % 2]
+
+
 def _idempotency_key(request: Request) -> UUID | None:
     value = request.headers.get("Idempotency-Key")
     try:
@@ -266,29 +316,16 @@ def _integer_query(request: Request, name: str, default: int) -> int:
         return default
 
 
-def _validation_problem(detail: str) -> JSONResponse:
+def _validation_problem(detail: str, *, error_code: str | None = None) -> JSONResponse:
     return JSONResponse(
         {
             "type": "about:blank",
             "title": "Unprocessable Entity",
             "status": 422,
             "detail": detail,
+            **({"error_code": error_code} if error_code is not None else {}),
         },
         status_code=422,
-        media_type="application/problem+json",
-    )
-
-
-def _not_found() -> JSONResponse:
-    return JSONResponse(
-        {
-            "type": "about:blank",
-            "title": "Not Found",
-            "status": 404,
-            "detail": "Account not found.",
-            "error_code": "ACCOUNT_NOT_FOUND",
-        },
-        status_code=404,
         media_type="application/problem+json",
     )
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -150,3 +151,65 @@ def test_forwarding_failure_is_not_retried_and_marks_replica_unhealthy() -> None
         assert (await pool.snapshot())["A"]["a1"] is False
 
     run(scenario())
+
+
+def test_same_shard_transfer_routes_once_and_cross_shard_is_rejected(
+    monkeypatch,
+) -> None:
+    selected = []
+
+    async def forward(request, shard_id, **kwargs):
+        selected.append(shard_id)
+        return gateway_app.JSONResponse({"shard": shard_id})
+
+    class TransferRequest:
+        def __init__(self, document):
+            self.document = document
+
+        async def body(self):
+            return json.dumps(self.document).encode()
+
+    monkeypatch.setattr(gateway_app, "_forward", forward)
+    same_shard = run(
+        gateway_app.transfer(
+            TransferRequest(
+                {
+                    "source_account_id": 1,
+                    "destination_account_id": 2,
+                    "amount": 10,
+                }
+            )
+        )
+    )
+    cross_shard = run(
+        gateway_app.transfer(
+            TransferRequest(
+                {
+                    "source_account_id": 1,
+                    "destination_account_id": 1001,
+                    "amount": 10,
+                }
+            )
+        )
+    )
+
+    assert same_shard.status_code == 200
+    assert selected == ["A"]
+    assert cross_shard.status_code == 422
+    assert b"CROSS_SHARD_TRANSFER_NOT_SUPPORTED" in cross_shard.body
+
+
+def test_positive_out_of_range_mutations_route_consistently(monkeypatch) -> None:
+    selected = []
+
+    async def forward(request, shard_id, **kwargs):
+        selected.append(shard_id)
+        return gateway_app.JSONResponse({"shard": shard_id})
+
+    monkeypatch.setattr(gateway_app, "_forward", forward)
+    request = SimpleNamespace()
+    run(gateway_app.account_operation(request, 999999))
+    run(gateway_app.account_operation(request, 999999))
+
+    assert len(selected) == 2
+    assert selected[0] == selected[1]

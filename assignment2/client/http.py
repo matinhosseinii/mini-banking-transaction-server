@@ -292,6 +292,22 @@ def _validated_outcome(
 def _matches_original_arguments(data: dict[str, Any], pending: PendingRequest) -> bool:
     if pending.operation == "CREATE_ACCOUNT":
         return data["requested_account_id"] is None and data["amount"] is None
+    if pending.operation == "TRANSFER":
+        payload = pending.payload
+        if payload is None:
+            return False
+        source_account_id = payload.get("source_account_id")
+        destination_account_id = payload.get("destination_account_id")
+        amount = payload.get("amount")
+        return (
+            _positive_integer(source_account_id)
+            and _positive_integer(destination_account_id)
+            and source_account_id != destination_account_id
+            and data["requested_account_id"] == source_account_id
+            and data["account_id"] in {None, source_account_id}
+            and data["amount"] == amount
+            and _positive_integer(amount)
+        )
     try:
         account_id = int(pending.path.split("/")[2])
     except (IndexError, ValueError):

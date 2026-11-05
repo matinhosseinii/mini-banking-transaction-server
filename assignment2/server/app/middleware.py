@@ -20,6 +20,7 @@ _MUTATING_PATHS = {
     "/accounts/{account_id}",
     "/accounts/{account_id}/deposit",
     "/accounts/{account_id}/withdraw",
+    "/transfers",
 }
 _ACTIONS = {
     ("GET", "/ready"): "READINESS",
@@ -28,6 +29,7 @@ _ACTIONS = {
     ("GET", "/accounts/{account_id}/balance"): "GET_BALANCE",
     ("POST", "/accounts/{account_id}/deposit"): "DEPOSIT",
     ("POST", "/accounts/{account_id}/withdraw"): "WITHDRAW",
+    ("POST", "/transfers"): "TRANSFER",
     ("GET", "/requests/{request_id}"): "GET_REQUEST",
     ("GET", "/requests"): "LIST_REQUESTS",
 }

@@ -25,6 +25,25 @@ Account creation has no account ID to route. The Gateway hashes the required
 `Idempotency-Key` deterministically to A or B, so retries always reach the same
 shard without requiring the Client to know shard identities.
 
+## Same-shard transfers
+
+`POST /transfers` atomically moves a positive amount between two active
+accounts owned by the same shard. Both rows are locked in ascending account-ID
+order and both balance changes commit in one PostgreSQL transaction. The
+durable `Idempotency-Key` record is committed in that transaction, so replaying
+an identical request cannot transfer money twice.
+
+The Client exposes the same operation through the Gateway:
+
+```sh
+.venv/bin/python -m client transfer \
+  --source-account-id 1 --destination-account-id 2 --amount 100
+```
+
+Transfers between Shards A and B return
+`CROSS_SHARD_TRANSFER_NOT_SUPPORTED`; cross-shard coordination and 2PC remain
+for later commits.
+
 ## Install dependencies
 
 Run these commands from the `assignment2/` directory:
@@ -92,6 +111,6 @@ skipped.
 
 ## Current limitations
 
-Transfers, the Transaction Coordinator, and two-phase commit are not
-implemented yet. Request-history aggregation is limited to the first 100
+Cross-shard transfers, the Transaction Coordinator, and two-phase commit are
+not implemented yet. Request-history aggregation is limited to the first 100
 matching records from each shard per Gateway request.

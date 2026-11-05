@@ -34,6 +34,7 @@ class Operation(StrEnum):
     CLOSE_ACCOUNT = "CLOSE_ACCOUNT"
     DEPOSIT = "DEPOSIT"
     WITHDRAW = "WITHDRAW"
+    TRANSFER = "TRANSFER"
 
 
 class IdempotencyConflict(RuntimeError):
@@ -178,6 +179,46 @@ def coordinate_withdraw(
         amount=amount,
         payload_hash=payload_hash,
         execute=lambda session: banking.withdraw(session, account_id, amount),
+    )
+
+
+def coordinate_transfer(
+    session_factory: sessionmaker[Session],
+    request_id: UUID,
+    source_account_id: int,
+    destination_account_id: int,
+    amount: int,
+    shard: ShardDefinition | None = None,
+) -> CoordinatedResult:
+    """Transfer funds at most once for a logical request UUID."""
+    _validate_request_id(request_id)
+    _validate_account_id(source_account_id)
+    _validate_account_id(destination_account_id)
+    _validate_amount(amount)
+    if source_account_id == destination_account_id:
+        raise BankingValidationError("Transfer accounts must be different.")
+    payload_hash = _canonical_payload_hash(
+        {
+            "operation": Operation.TRANSFER,
+            "source_account_id": source_account_id,
+            "destination_account_id": destination_account_id,
+            "amount": amount,
+        }
+    )
+    return _coordinate(
+        session_factory=session_factory,
+        request_id=request_id,
+        operation=Operation.TRANSFER,
+        requested_account_id=source_account_id,
+        amount=amount,
+        payload_hash=payload_hash,
+        execute=lambda session: banking.transfer(
+            session,
+            source_account_id,
+            destination_account_id,
+            amount,
+            shard,
+        ),
     )
 
 

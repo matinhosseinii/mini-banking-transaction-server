@@ -74,7 +74,8 @@ class Request(Base):
     __tablename__ = "requests"
     __table_args__ = (
         CheckConstraint(
-            "operation IN ('CREATE_ACCOUNT', 'CLOSE_ACCOUNT', 'DEPOSIT', 'WITHDRAW')",
+            "operation IN "
+            "('CREATE_ACCOUNT', 'CLOSE_ACCOUNT', 'DEPOSIT', 'WITHDRAW', 'TRANSFER')",
             name="ck_requests_operation_allowed",
         ),
         CheckConstraint(
@@ -90,7 +91,7 @@ class Request(Base):
             "AND requested_account_id IS NULL AND amount IS NULL) OR "
             "(operation = 'CLOSE_ACCOUNT' "
             "AND requested_account_id IS NOT NULL AND amount IS NULL) OR "
-            "(operation IN ('DEPOSIT', 'WITHDRAW') "
+            "(operation IN ('DEPOSIT', 'WITHDRAW', 'TRANSFER') "
             "AND requested_account_id IS NOT NULL AND amount > 0)) IS TRUE",
             name="ck_requests_operation_arguments",
         ),
@@ -122,8 +123,13 @@ class Request(Base):
             "AND balance_after IS NOT NULL AND error_code IS NULL "
             "AND balance_after::numeric = "
             "balance_before::numeric - amount::numeric) OR "
+            "(status = 'SUCCEEDED' AND operation = 'TRANSFER' "
+            "AND account_id IS NOT NULL AND balance_before IS NOT NULL "
+            "AND balance_after IS NOT NULL AND error_code IS NULL "
+            "AND balance_after::numeric = "
+            "balance_before::numeric - amount::numeric) OR "
             "(status = 'REJECTED' "
-            "AND operation IN ('CLOSE_ACCOUNT', 'DEPOSIT', 'WITHDRAW') "
+            "AND operation IN ('CLOSE_ACCOUNT', 'DEPOSIT', 'WITHDRAW', 'TRANSFER') "
             "AND account_id IS NULL AND balance_before IS NULL "
             "AND balance_after IS NULL AND error_code = 'ACCOUNT_NOT_FOUND') OR "
             "(status = 'REJECTED' "
@@ -131,7 +137,12 @@ class Request(Base):
             "AND account_id IS NOT NULL AND balance_before = 0 "
             "AND balance_after = 0 "
             "AND error_code = 'ACCOUNT_ALREADY_CLOSED') OR "
-            "(status = 'REJECTED' AND operation = 'WITHDRAW' "
+            "(status = 'REJECTED' AND operation = 'TRANSFER' "
+            "AND account_id IS NOT NULL AND balance_before IS NOT NULL "
+            "AND balance_after IS NOT NULL "
+            "AND balance_before = balance_after "
+            "AND error_code = 'ACCOUNT_ALREADY_CLOSED') OR "
+            "(status = 'REJECTED' AND operation IN ('WITHDRAW', 'TRANSFER') "
             "AND account_id IS NOT NULL AND balance_before IS NOT NULL "
             "AND balance_after IS NOT NULL "
             "AND balance_before = balance_after "

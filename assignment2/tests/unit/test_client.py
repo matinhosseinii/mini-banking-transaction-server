@@ -225,6 +225,56 @@ def test_transient_retries_reuse_uuid_and_payload_then_succeed() -> None:
     assert {request.content for request in requests} == {b'{"amount":10}'}
 
 
+def test_successful_transfer_response_is_definitive() -> None:
+    request_id = UUID("d648b907-dc46-4fbb-8b46-646844a95f99")
+    pending = PendingRequest.create(
+        request_id=request_id,
+        service="standalone",
+        operation="TRANSFER",
+        method="POST",
+        path="/transfers",
+        payload={
+            "source_account_id": 1,
+            "destination_account_id": 2,
+            "amount": 100,
+        },
+    )
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path))
+        return _response(
+            200,
+            {
+                "request_id": str(request_id),
+                "operation": "TRANSFER",
+                "requested_account_id": 1,
+                "account_id": 1,
+                "amount": 100,
+                "status": "SUCCEEDED",
+                "balance_before": 10_000,
+                "balance_after": 9_900,
+                "error_code": None,
+                "created_at": datetime.now(UTC).isoformat(),
+                "replayed": False,
+            },
+        )
+
+    with BankingHttpClient(
+        "http://service.test",
+        Timeouts(),
+        RetryPolicy(),
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        result = client.mutate(pending, lambda message: None)
+
+    assert result.kind is ResultKind.SUCCESS
+    assert result.detail == "Success."
+    assert result.data is not None
+    assert result.data["status"] == "SUCCEEDED"
+    assert requests == [("POST", "/transfers")]
+
+
 def test_exhausted_failures_perform_one_lookup_and_return_unknown() -> None:
     pending = _pending()
     paths = []
@@ -535,6 +585,15 @@ def test_read_only_request_has_one_attempt() -> None:
         ["withdraw", "--account-id", "1", "--amount", "10"],
         ["balance", "--account-id", "1"],
         ["close-account", "--account-id", "1"],
+        [
+            "transfer",
+            "--source-account-id",
+            "1",
+            "--destination-account-id",
+            "2",
+            "--amount",
+            "10",
+        ],
         ["request", "get", str(uuid4())],
         ["request", "list", "--limit", "20"],
         ["pending", "list"],
@@ -555,6 +614,30 @@ def test_mutation_without_request_id_generates_uuid4() -> None:
     pending = cli._new_pending(args, "standalone")
 
     assert pending.request_id.version == 4
+
+
+def test_transfer_builds_one_gateway_pending_mutation() -> None:
+    args = cli.build_parser().parse_args(
+        [
+            "transfer",
+            "--source-account-id",
+            "1",
+            "--destination-account-id",
+            "2",
+            "--amount",
+            "15",
+        ]
+    )
+
+    pending = cli._new_pending(args, "gateway")
+
+    assert pending.operation == "TRANSFER"
+    assert pending.path == "/transfers"
+    assert pending.payload == {
+        "source_account_id": 1,
+        "destination_account_id": 2,
+        "amount": 15,
+    }
 
 
 @pytest.mark.parametrize(
@@ -618,6 +701,68 @@ def test_cli_json_mutation_persists_before_send_and_removes_after_success(
     assert output.err == ""
     assert observed_pending[0].request_id == request_id
     assert PendingStore(config.pending_dir).list() == []
+
+
+def test_cli_transfer_dispatches_through_pending_mutation_workflow(
+    tmp_path, monkeypatch
+) -> None:
+    config = _config(tmp_path)
+    request_id = uuid4()
+    observed = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def mutate(self, pending, progress):
+            observed.append((pending, PendingStore(config.pending_dir).get(request_id)))
+            return cli.ClientResult(
+                ResultKind.SUCCESS, 200, {"status": "SUCCEEDED"}, "Success."
+            )
+
+    monkeypatch.setattr(cli, "load_config", lambda path: config)
+    monkeypatch.setattr(cli, "BankingHttpClient", FakeClient)
+    monkeypatch.setattr(
+        cli,
+        "_read_command",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("transfer command reached the read workflow")
+        ),
+    )
+
+    exit_code = cli.main(
+        [
+            "transfer",
+            "--source-account-id",
+            "1",
+            "--destination-account-id",
+            "2",
+            "--amount",
+            "15",
+            "--request-id",
+            str(request_id),
+        ]
+    )
+
+    assert exit_code == cli.ExitCode.SUCCESS
+    sent, persisted = observed[0]
+    assert persisted == sent
+    assert sent.request_id == request_id
+    assert sent.operation == "TRANSFER"
+    assert sent.method == "POST"
+    assert sent.path == "/transfers"
+    assert sent.payload == {
+        "source_account_id": 1,
+        "destination_account_id": 2,
+        "amount": 15,
+    }
+    assert PendingStore(config.pending_dir).get(request_id) is None
 
 
 def test_cli_unknown_preserves_pending_and_uses_exit_three(
