@@ -153,10 +153,11 @@ def test_forwarding_failure_is_not_retried_and_marks_replica_unhealthy() -> None
     run(scenario())
 
 
-def test_same_shard_transfer_routes_once_and_cross_shard_is_rejected(
+def test_same_shard_transfer_routes_to_bank_and_cross_shard_to_coordinator(
     monkeypatch,
 ) -> None:
     selected = []
+    coordinator_calls = []
 
     async def forward(request, shard_id, **kwargs):
         selected.append(shard_id)
@@ -165,11 +166,22 @@ def test_same_shard_transfer_routes_once_and_cross_shard_is_rejected(
     class TransferRequest:
         def __init__(self, document):
             self.document = document
+            self.app = SimpleNamespace(
+                state=SimpleNamespace(
+                    settings=SimpleNamespace(coordinator_url="http://coordinator")
+                )
+            )
 
         async def body(self):
             return json.dumps(self.document).encode()
 
     monkeypatch.setattr(gateway_app, "_forward", forward)
+
+    async def send_to_url(request, base_url):
+        coordinator_calls.append(base_url)
+        return gateway_app.JSONResponse({"coordinator": True})
+
+    monkeypatch.setattr(gateway_app, "_send_to_url", send_to_url)
     same_shard = run(
         gateway_app.transfer(
             TransferRequest(
@@ -195,8 +207,8 @@ def test_same_shard_transfer_routes_once_and_cross_shard_is_rejected(
 
     assert same_shard.status_code == 200
     assert selected == ["A"]
-    assert cross_shard.status_code == 422
-    assert b"CROSS_SHARD_TRANSFER_NOT_SUPPORTED" in cross_shard.body
+    assert cross_shard.status_code == 200
+    assert coordinator_calls == ["http://coordinator"]
 
 
 def test_positive_out_of_range_mutations_route_consistently(monkeypatch) -> None:

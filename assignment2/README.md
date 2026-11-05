@@ -40,9 +40,36 @@ The Client exposes the same operation through the Gateway:
   --source-account-id 1 --destination-account-id 2 --amount 100
 ```
 
-Transfers between Shards A and B return
-`CROSS_SHARD_TRANSFER_NOT_SUPPORTED`; public cross-shard coordination remains
-for a later commit.
+Transfers between Shards A and B are routed by the Gateway to the single
+durable Coordinator. Same-shard transfers continue directly to a Banking
+Server and retain their one-database transaction path.
+
+## Cross-shard transfers
+
+The Coordinator stores each incoming `Idempotency-Key` as the distributed
+transaction UUID in its own persistent PostgreSQL database. It records the
+canonical source, destination, amount, shard ownership, participant states,
+and final decision. Reusing a UUID with another payload returns an idempotency
+conflict.
+
+For a cross-shard request, the Coordinator prepares a DEBIT on the source and
+a CREDIT on the destination. COMMIT is written durably before either
+participant receives `COMMIT PREPARED`; any other phase-one outcome produces a
+durable ABORT before rollback messages are sent. A durable COMMIT is never
+reversed. If delivery is interrupted, status lookup and the bounded recovery
+loop repeat the same decision with the original UUID until both participants
+confirm it.
+
+The existing Client command works without shard knowledge:
+
+```sh
+.venv/bin/python -m client transfer \
+  --source-account-id 1 --destination-account-id 1001 --amount 100
+```
+
+The Gateway checks the Coordinator first for request-status lookup, so a
+confirmed cross-shard result uses the same public mutation schema and is not
+misclassified as `UNKNOWN`.
 
 ## Durable 2PC participants
 
@@ -93,7 +120,8 @@ deployment:
 
 ```sh
 docker compose --env-file infra/standalone/.env \
-  -f infra/standalone/compose.yaml up -d --build --wait postgres-a postgres-b
+  -f infra/standalone/compose.yaml up -d --build --wait \
+  postgres-a postgres-b postgres-coordinator
 ./infra/standalone/scripts/migrate.sh
 ./infra/standalone/scripts/seed.sh
 docker compose --env-file infra/standalone/.env \
@@ -109,6 +137,11 @@ preserve balances across application container restarts.
 Both PostgreSQL services start with `max_prepared_transactions=20`. Changing
 that server setting requires restarting the PostgreSQL containers, but does
 not require deleting or recreating their persistent volumes.
+
+The deployment also includes `postgres-coordinator` with the persistent
+`postgres-coordinator-data` volume. The Coordinator initializes its minimal
+transaction journal idempotently at startup; it never stores authoritative
+account balances.
 
 With `API_BIND_IP=127.0.0.1`, configure the Client's sole service URL as
 `http://127.0.0.1:8000`; it does not need replica or shard addresses. The
@@ -148,9 +181,18 @@ TEST_POSTGRES_ADMIN_URL=postgresql+psycopg://... \
   .venv/bin/python -m pytest tests/integration/test_participant.py -q
 ```
 
+Coordinator durability tests use the same administrative database setting:
+
+```sh
+TEST_POSTGRES_ADMIN_URL=postgresql+psycopg://... \
+  .venv/bin/python -m pytest tests/integration/test_coordinator.py -q
+```
+
 ## Current limitations
 
-The Transaction Coordinator and public cross-shard transfer orchestration are
-not implemented yet; the current release provides participant primitives only
-and is not a complete distributed 2PC system. Request-history aggregation is
-limited to the first 100 matching records from each shard per Gateway request.
+A single Coordinator instance is used. Its temporary unavailability delays
+new cross-shard transfers and decision resolution, while durable decisions and
+participant prepared transactions survive restarts. Coordinator clustering,
+leader election, and replication are not implemented. Request-history list
+aggregation remains limited to the shard histories; individual cross-shard
+request lookup is supported through the Coordinator.

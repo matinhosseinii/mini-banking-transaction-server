@@ -235,7 +235,7 @@ def test_successful_transfer_response_is_definitive() -> None:
         path="/transfers",
         payload={
             "source_account_id": 1,
-            "destination_account_id": 2,
+            "destination_account_id": 1001,
             "amount": 100,
         },
     )

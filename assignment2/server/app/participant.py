@@ -78,6 +78,8 @@ def prepare(
     shard.require_owner(account_id)
     gid = _gid(shard.shard_id, transaction_id)
     observed = lookup(session_factory, shard, transaction_id)
+    if observed.state is ParticipantState.ABORTED:
+        return observed
     if observed.account_id is not None:
         if (
             observed.account_id,
@@ -254,7 +256,8 @@ def abort(
     if observed.account_id is not None:
         _mark_aborted(session_factory, transaction_id)
         return lookup(session_factory, shard, transaction_id)
-    return observed
+    _record_abort_decision(session_factory, transaction_id)
+    return lookup(session_factory, shard, transaction_id)
 
 
 def lookup(
@@ -266,7 +269,17 @@ def lookup(
     try:
         with session_factory() as session:
             item = session.get(ParticipantTransaction, transaction_id)
-            if item is None or item.shard_id != shard.shard_id:
+            abort_decided = (
+                session.get(ParticipantAbortDecision, transaction_id) is not None
+            )
+            if item is None:
+                state = (
+                    ParticipantState.ABORTED
+                    if abort_decided
+                    else ParticipantState.UNKNOWN
+                )
+                return ParticipantResult(transaction_id, state)
+            if item.shard_id != shard.shard_id:
                 return ParticipantResult(transaction_id, ParticipantState.UNKNOWN)
             prepared = session.execute(
                 text(
@@ -274,9 +287,6 @@ def lookup(
                 ),
                 {"gid": item.gid},
             ).scalar_one()
-            abort_decided = (
-                session.get(ParticipantAbortDecision, transaction_id) is not None
-            )
             if item.state == "COMMITTED":
                 state = ParticipantState.COMMITTED
             elif item.state == "ABORTED":

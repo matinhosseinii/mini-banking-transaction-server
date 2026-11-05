@@ -139,15 +139,21 @@ async def transfer(request: Request) -> Response:
         and destination_is_supported
         and source_shard != destination_shard
     ):
-        return _validation_problem(
-            "Cross-shard transfers are not implemented.",
-            error_code="CROSS_SHARD_TRANSFER_NOT_SUPPORTED",
+        return await _send_to_url(
+            request,
+            request.app.state.settings.coordinator_url,
         )
     return await _forward(request, source_shard)
 
 
 @app.get("/requests/{request_id}")
 async def get_request(request: Request, request_id: UUID) -> Response:
+    coordinator = await _send_to_url(
+        request,
+        request.app.state.settings.coordinator_url,
+    )
+    if coordinator.status_code not in {404, 502}:
+        return coordinator
     responses = await _fanout_read(request, ("A", "B"))
     for response in responses:
         if response.status_code == 200:
@@ -226,6 +232,32 @@ async def _send(
             "The selected replica did not complete the request; the Gateway did not retry it.",
         )
     _log_selection(request, replica, backend.status_code)
+    return Response(
+        content=backend.content,
+        status_code=backend.status_code,
+        headers={
+            name: value
+            for name, value in backend.headers.items()
+            if name.lower() in _RETURNED_HEADERS
+        },
+    )
+
+
+async def _send_to_url(request: Request, base_url: str) -> Response:
+    try:
+        backend = await request.app.state.client.request(
+            request.method,
+            f"{base_url}{request.url.path}",
+            params=request.query_params,
+            content=await request.body(),
+            headers={
+                name: value
+                for name, value in request.headers.items()
+                if name.lower() in _FORWARDED_HEADERS
+            },
+        )
+    except httpx.RequestError:
+        return problem(502, "The Coordinator is unavailable.")
     return Response(
         content=backend.content,
         status_code=backend.status_code,

@@ -12,14 +12,18 @@ def test_compose_defines_four_replicas_gateway_and_persistent_databases() -> Non
         "bank-b1",
         "bank-b2",
         "gateway",
+        "coordinator",
         "postgres-a",
         "postgres-b",
+        "postgres-coordinator",
     ):
         assert f"  {service}:" in compose
     assert "postgres-a-data:/var/lib/postgresql/data" in compose
     assert "postgres-b-data:/var/lib/postgresql/data" in compose
+    assert "postgres-coordinator-data:/var/lib/postgresql/data" in compose
     assert "postgres-a-data:" in compose
     assert "postgres-b-data:" in compose
+    assert "postgres-coordinator-data:" in compose
     assert "5432:5432" not in compose
     assert "@postgres-a:5432/" in compose
     assert "@postgres-b:5432/" in compose

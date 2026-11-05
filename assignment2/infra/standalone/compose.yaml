@@ -83,6 +83,7 @@ services:
       BANK_A2_URL: http://bank-a2:8000
       BANK_B1_URL: http://bank-b1:8000
       BANK_B2_URL: http://bank-b2:8000
+      COORDINATOR_URL: http://coordinator:8000
       GATEWAY_HEALTH_INTERVAL_SECONDS: ${GATEWAY_HEALTH_INTERVAL_SECONDS:-5}
       GATEWAY_HEALTH_TIMEOUT_SECONDS: ${GATEWAY_HEALTH_TIMEOUT_SECONDS:-1}
       LOG_LEVEL: ${LOG_LEVEL:?LOG_LEVEL is required}
@@ -97,6 +98,8 @@ services:
         condition: service_healthy
       bank-b2:
         condition: service_healthy
+      coordinator:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -109,6 +112,40 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+    restart: unless-stopped
+    networks:
+      - banking
+
+  coordinator:
+    build:
+      context: ../..
+      dockerfile: coordinator/Dockerfile
+    environment:
+      DATABASE_URL: "postgresql+psycopg://${POSTGRES_COORDINATOR_USER:-banking_coordinator_user}:${POSTGRES_COORDINATOR_PASSWORD:-fictional_coordinator_password}@postgres-coordinator:5432/${POSTGRES_COORDINATOR_DB:-banking_coordinator}"
+      BANK_A1_URL: http://bank-a1:8000
+      BANK_A2_URL: http://bank-a2:8000
+      BANK_B1_URL: http://bank-b1:8000
+      BANK_B2_URL: http://bank-b2:8000
+      COORDINATOR_RECOVERY_INTERVAL_SECONDS: ${COORDINATOR_RECOVERY_INTERVAL_SECONDS:-5}
+    depends_on:
+      postgres-coordinator:
+        condition: service_healthy
+      bank-a1:
+        condition: service_healthy
+      bank-b1:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3).close()
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
     networks:
       - banking
@@ -155,6 +192,26 @@ services:
     networks:
       - banking
 
+  postgres-coordinator:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${POSTGRES_COORDINATOR_DB:-banking_coordinator}
+      POSTGRES_USER: ${POSTGRES_COORDINATOR_USER:-banking_coordinator_user}
+      POSTGRES_PASSWORD: ${POSTGRES_COORDINATOR_PASSWORD:-fictional_coordinator_password}
+    volumes:
+      - postgres-coordinator-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - banking
+
 networks:
   banking:
     driver: bridge
@@ -162,3 +219,4 @@ networks:
 volumes:
   postgres-a-data:
   postgres-b-data:
+  postgres-coordinator-data:

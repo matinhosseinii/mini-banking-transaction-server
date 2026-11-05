@@ -23,6 +23,7 @@ class GatewaySettings:
     replicas: tuple[ReplicaConfig, ...]
     health_interval_seconds: float
     health_timeout_seconds: float
+    coordinator_url: str = "http://coordinator:8000"
 
     @classmethod
     def from_environment(
@@ -46,11 +47,14 @@ class GatewaySettings:
             health_timeout_seconds=_positive_float(
                 values, "GATEWAY_HEALTH_TIMEOUT_SECONDS", 1.0
             ),
+            coordinator_url=_url(
+                values, "COORDINATOR_URL", default="http://coordinator:8000"
+            ),
         )
 
 
-def _url(values: Mapping[str, str], name: str) -> str:
-    value = values.get(name, "").strip().rstrip("/")
+def _url(values: Mapping[str, str], name: str, *, default: str = "") -> str:
+    value = values.get(name, default).strip().rstrip("/")
     if not value.startswith(("http://", "https://")):
         raise GatewayConfigurationError(f"{name} must be an HTTP URL.")
     return value

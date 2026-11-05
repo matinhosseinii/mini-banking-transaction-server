@@ -342,3 +342,23 @@ def test_abort_decision_survives_crash_before_rollback(participant_database) -> 
     )
     assert _balance(factory, account_id) == 20
     assert _prepared_count(factory, transaction_id) == 0
+
+
+def test_abort_before_prepare_prevents_delayed_prepare(participant_database) -> None:
+    _, factory = participant_database
+    transaction_id = uuid4()
+
+    aborted = participant.abort(factory, SHARD_A, transaction_id)
+    delayed = participant.prepare(
+        factory,
+        SHARD_A,
+        transaction_id,
+        1,
+        participant.Direction.DEBIT,
+        1,
+    )
+
+    assert aborted.state is participant.ParticipantState.ABORTED
+    assert delayed.state is participant.ParticipantState.ABORTED
+    with pytest.raises(participant.ParticipantConflict):
+        participant.commit(factory, SHARD_A, transaction_id)
