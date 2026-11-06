@@ -1,0 +1,13 @@
+services:
+  bank-a1:
+    image: matinhosseinii/banking-server:assignment2
+  bank-a2:
+    image: matinhosseinii/banking-server:assignment2
+  bank-b1:
+    image: matinhosseinii/banking-server:assignment2
+  bank-b2:
+    image: matinhosseinii/banking-server:assignment2
+  gateway:
+    image: matinhosseinii/banking-gateway:assignment2
+  coordinator:
+    image: matinhosseinii/banking-coordinator:assignment2

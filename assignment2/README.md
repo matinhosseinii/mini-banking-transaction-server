@@ -77,6 +77,45 @@ docker compose --env-file infra/standalone/.env \
 
 Only the Gateway is exposed on the host (`127.0.0.1:8000` by default).
 
+## Docker Hub Deployment
+
+Prebuilt application images are available on Docker Hub:
+
+| Component | Docker Hub Image |
+|---|---|
+| Banking Server (all four replicas) | [matinhosseinii/banking-server](https://hub.docker.com/r/matinhosseinii/banking-server) |
+| Gateway | [matinhosseinii/banking-gateway](https://hub.docker.com/r/matinhosseinii/banking-gateway) |
+| Coordinator | [matinhosseinii/banking-coordinator](https://hub.docker.com/r/matinhosseinii/banking-coordinator) |
+
+All images use the `assignment2` tag. PostgreSQL uses the official `postgres:17` image.
+
+The `compose.hub.yaml` override replaces locally built application images with the published images.
+
+After configuring `.env` and initializing the shard databases using the Deployment instructions above, pull the images:
+
+```bash
+docker compose --env-file infra/standalone/.env \
+  -f infra/standalone/compose.yaml \
+  -f infra/standalone/compose.hub.yaml pull
+```
+
+Start the complete platform without building locally:
+
+```bash
+docker compose --env-file infra/standalone/.env \
+  -f infra/standalone/compose.yaml \
+  -f infra/standalone/compose.hub.yaml \
+  up -d --no-build --wait
+```
+
+Verify all nine containers are healthy:
+
+```bash
+docker compose --env-file infra/standalone/.env \
+  -f infra/standalone/compose.yaml \
+  -f infra/standalone/compose.hub.yaml ps
+```
+
 ## Client Usage
 
 Configure the Client to use the Gateway:
