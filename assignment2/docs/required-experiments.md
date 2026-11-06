@@ -1,68 +1,77 @@
 # Required Distributed Systems Experiments
 
-Run commands from `assignment2/`. Start from the seeded Compose deployment in
-the README, configure the Client for `http://127.0.0.1:8000`, and load the
-Compose variables when SQL commands are used:
+Run commands from `assignment2/` after starting and seeding the Docker Compose deployment.
 
-```sh
+Configure the Client for `http://127.0.0.1:8000` and load environment variables:
+
+```bash
 set -a
 . infra/standalone/.env
 set +a
+
 COMPOSE="docker compose --env-file infra/standalone/.env -f infra/standalone/compose.yaml"
 ```
 
-Use a fresh or known demo dataset. Capture terminal output, relevant JSON logs,
-request UUIDs, before/after balances, and the verification SQL for the report.
+Use a known demo dataset. Capture relevant logs, transaction IDs, SQL results, and before/after balances for the report and video.
 
-## 1. Shard distribution and routing
+## 1. Shard Distribution and Routing
 
-Objective: prove exclusive range ownership and Gateway routing.
+Verify account ownership and Gateway routing:
 
-```sh
+```bash
 $COMPOSE exec -T postgres-a psql -U "$POSTGRES_A_USER" -d "$POSTGRES_A_DB" \
   -c "SELECT min(id), max(id), count(*) FROM accounts;" \
   -c "SELECT count(*) AS wrong_shard_rows FROM accounts WHERE id NOT BETWEEN 1 AND 1000;"
+
 $COMPOSE exec -T postgres-b psql -U "$POSTGRES_B_USER" -d "$POSTGRES_B_DB" \
   -c "SELECT min(id), max(id), count(*) FROM accounts;" \
   -c "SELECT count(*) AS wrong_shard_rows FROM accounts WHERE id NOT BETWEEN 1001 AND 2000;"
-.venv/bin/python -m client balance --account-id 1
-.venv/bin/python -m client balance --account-id 1001
+
+../.venv/bin/python -m client balance --account-id 1
+../.venv/bin/python -m client balance --account-id 1001
+
 $COMPOSE logs --since 2m gateway | grep 'gateway_request_completed'
 ```
 
-Expected: both `wrong_shard_rows` values are zero; Gateway log entries show
-Shard A for account 1 and Shard B for account 1001. Capture both SQL result sets
-and the two routing log entries.
+**Expected:** Both `wrong_shard_rows` values are zero. Gateway logs identify Shard A for account 1 and Shard B for account 1001.
 
-## 2. Replica load distribution
+## 2. Replica Load Distribution
 
-Objective: show round-robin selection across both healthy replicas of Shard A.
+Send 20 requests to Shard A:
 
-```sh
+```bash
 for unused in $(seq 1 20); do
   curl -fsS http://127.0.0.1:8000/accounts/1/balance >/dev/null
 done
+
 $COMPOSE logs --since 2m gateway > /tmp/gateway-round-robin.log
+
 grep -c '"replica_id":"bank-a1"' /tmp/gateway-round-robin.log
 grep -c '"replica_id":"bank-a2"' /tmp/gateway-round-robin.log
 ```
 
-Expected: both counts are nonzero and normally 10 each. Capture the counts and
-several alternating log entries. No cleanup is required.
+**Expected:** Both replicas receive requests, normally close to 10 each. Counts may include other requests in the log window.
 
-## 3. Concurrent operations through two replicas
+## 3. Concurrent Operations Through Two Replicas
 
-Objective: prove shared PostgreSQL row locking prevents lost updates when both
-replicas mutate account 1. Record the initial balance first.
+Record the initial balance:
 
-```sh
-.venv/bin/python -m client balance --account-id 1
+```bash
+../.venv/bin/python -m client balance --account-id 1
+```
+
+Execute concurrent deposits and withdrawals directly against the two replicas through the private Compose network:
+
+```bash
 $COMPOSE exec -T gateway python - <<'PY'
-import concurrent.futures, uuid, httpx
+import concurrent.futures
+import uuid
+import httpx
 
 def mutate(index):
     operation = "deposit" if index % 2 == 0 else "withdraw"
     replica = "bank-a1" if index % 2 == 0 else "bank-a2"
+
     return httpx.post(
         f"http://{replica}:8000/accounts/1/{operation}",
         json={"amount": 1},
@@ -73,123 +82,216 @@ def mutate(index):
 with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
     print(list(pool.map(mutate, range(40))))
 PY
-.venv/bin/python -m client balance --account-id 1
+
+../.venv/bin/python -m client balance --account-id 1
 ```
 
-Expected: twenty deposits and twenty withdrawals succeed and the final balance
-equals the initial balance. Capture both balances and the forty HTTP statuses.
-The database-backed equivalents are
-`test_concurrent_deposits_do_not_lose_updates` and
-`test_concurrent_withdrawals_never_make_balance_negative`.
+**Expected:** Twenty deposits and twenty withdrawals succeed, with the final balance equal to the initial balance. PostgreSQL row-level locking prevents lost updates.
 
-## 4. Replica interruption under bounded load
+## 4. Replica Interruption Under Load
 
-Objective: stop `bank-a1`, observe continued service through `bank-a2`, then
-observe `bank-a1` rejoin.
+Start bounded balance-request load in the background:
 
-```sh
-.venv/bin/python -m load_generator --scenario balance --account-id 1 \
-  --requests 10000 --concurrency 5 --json > /tmp/interruption-load.json &
+```bash
+(
+  for unused in $(seq 1 1000); do
+    curl -sS -o /dev/null \
+      http://127.0.0.1:8000/accounts/1/balance || true
+  done
+) > /tmp/interruption-load.log 2>&1 &
+
 LOAD_PID=$!
+```
+
+Stop one replica while load is running:
+
+```bash
 $COMPOSE stop bank-a1
-$COMPOSE logs --since 2m gateway | tail -50
+$COMPOSE logs --since 2m gateway | tail -30
+```
+
+Restart it:
+
+```bash
 $COMPOSE start bank-a1
 wait "$LOAD_PID"
+```
+
+Inspect routing:
+
+```bash
 $COMPOSE logs --since 5m gateway > /tmp/interruption-gateway.log
-grep -c '"replica_id":"bank-a2"' /tmp/interruption-gateway.log
+
 grep -c '"replica_id":"bank-a1"' /tmp/interruption-gateway.log
+grep -c '"replica_id":"bank-a2"' /tmp/interruption-gateway.log
 ```
 
-Expected: after health detection, requests use `bank-a2`; after restart and the
-configured health interval, new entries use `bank-a1` again. Some in-flight
-requests may be UNKNOWN because the Gateway deliberately does not replay a
-financial request after ambiguous delivery. Capture the load summary, service
-state transitions, and timestamped selection logs.
+**Expected:** The Gateway routes new requests through `bank-a2` while `bank-a1` is unavailable, then resumes selecting `bank-a1` after recovery.
 
-## 5. Local and cross-shard transfers
+Verify the timing using Gateway logs; aggregate counts alone do not prove failover.
 
-Objective: contrast one-database atomic transfer with durable 2PC and verify
-conservation. Capture balances for accounts 1, 2, and 1001 before and after.
+## 5. Same-Shard and Cross-Shard Transfers
 
-```sh
-LOCAL_ID=$(python -c 'import uuid; print(uuid.uuid4())')
-CROSS_ID=$(python -c 'import uuid; print(uuid.uuid4())')
-.venv/bin/python -m client balance --account-id 1
-.venv/bin/python -m client balance --account-id 2
-.venv/bin/python -m client balance --account-id 1001
-.venv/bin/python -m client transfer --source-account-id 1 \
-  --destination-account-id 2 --amount 10 --request-id "$LOCAL_ID"
-.venv/bin/python -m client transfer --source-account-id 1 \
-  --destination-account-id 1001 --amount 10 --request-id "$CROSS_ID"
-.venv/bin/python -m client balance --account-id 1
-.venv/bin/python -m client balance --account-id 2
-.venv/bin/python -m client balance --account-id 1001
-$COMPOSE exec -T postgres-coordinator psql -U "${POSTGRES_COORDINATOR_USER:-banking_coordinator_user}" \
+Generate unique request IDs:
+
+```bash
+LOCAL_ID=$(../.venv/bin/python -c 'import uuid; print(uuid.uuid4())')
+CROSS_ID=$(../.venv/bin/python -c 'import uuid; print(uuid.uuid4())')
+```
+
+Record initial balances:
+
+```bash
+for id in 1 2 1001; do
+  ../.venv/bin/python -m client balance --account-id "$id"
+done
+```
+
+Execute both transfers:
+
+```bash
+../.venv/bin/python -m client transfer \
+  --source-account-id 1 --destination-account-id 2 \
+  --amount 10 --request-id "$LOCAL_ID"
+
+../.venv/bin/python -m client transfer \
+  --source-account-id 1 --destination-account-id 1001 \
+  --amount 10 --request-id "$CROSS_ID"
+```
+
+Verify final balances:
+
+```bash
+for id in 1 2 1001; do
+  ../.venv/bin/python -m client balance --account-id "$id"
+done
+```
+
+Inspect the Coordinator decision:
+
+```bash
+$COMPOSE exec -T postgres-coordinator \
+  psql -U "${POSTGRES_COORDINATOR_USER:-banking_coordinator_user}" \
   -d "${POSTGRES_COORDINATOR_DB:-banking_coordinator}" \
-  -c "SELECT transaction_id,state,decision FROM coordinated_transfers WHERE transaction_id='$CROSS_ID';"
+  -c "SELECT transaction_id, state, decision FROM coordinated_transfers WHERE transaction_id='$CROSS_ID';"
 ```
 
-Expected: the local transfer changes accounts 1 and 2 atomically; the cross
-transfer has `decision=COMMIT`, `state=RESOLVED`, and changes accounts 1 and
-1001 by equal opposite amounts. Capture all balances and the coordinator row.
+**Expected:** Both transfers preserve the total balance. The cross-shard transfer reaches `COMMIT/RESOLVED`.
 
-## 6. Coordinator interruption after durable COMMIT
+## 6. Coordinator Crash After Durable COMMIT
 
-Objective: terminate the Coordinator precisely after persisting COMMIT but
-before sending either participant COMMIT, then prove restart recovery.
+This experiment terminates the Coordinator after persisting COMMIT but before sending participant COMMIT messages.
 
-```sh
-TX_ID=$(python -c 'import uuid; print(uuid.uuid4())')
+Ensure the Coordinator image contains the fault-injection implementation. Rebuild it first if the image is outdated.
+
+Record initial balances, then generate a new transaction ID:
+
+```bash
+TX_ID=$(../.venv/bin/python -c 'import uuid; print(uuid.uuid4())')
 export COORDINATOR_EXPERIMENT_CRASH_AFTER_COMMIT_TRANSACTION_ID="$TX_ID"
-$COMPOSE up -d --force-recreate coordinator gateway
-.venv/bin/python -m client transfer --source-account-id 1 \
-  --destination-account-id 1001 --amount 10 --request-id "$TX_ID" || true
-$COMPOSE logs --since 2m coordinator
-$COMPOSE ps coordinator
-.venv/bin/python -m client pending check "$TX_ID" || true
-$COMPOSE exec -T postgres-coordinator psql -U "${POSTGRES_COORDINATOR_USER:-banking_coordinator_user}" \
+echo "$TX_ID"
+```
+
+Recreate the Coordinator with the experiment setting:
+
+```bash
+$COMPOSE up -d --force-recreate coordinator
+
+$COMPOSE exec coordinator \
+  printenv COORDINATOR_EXPERIMENT_CRASH_AFTER_COMMIT_TRANSACTION_ID
+```
+
+Execute the transfer once:
+
+```bash
+../.venv/bin/python -m client --json transfer \
+  --source-account-id 1 --destination-account-id 1001 \
+  --amount 10 --request-id "$TX_ID"
+```
+
+The Client may retry with the same UUID during recovery. Do not create a second transfer with a new UUID.
+
+Verify the crash and automatic restart:
+
+```bash
+docker inspect assignment2-gateway-coordinator-1 \
+  --format 'RestartCount={{.RestartCount}} Status={{.State.Status}}'
+
+$COMPOSE logs --since 3m coordinator
+```
+
+Expected log:
+
+```text
+Experiment fault: exiting after durable COMMIT
+```
+
+Verify the durable decision:
+
+```bash
+$COMPOSE exec -T postgres-coordinator \
+  psql -U "${POSTGRES_COORDINATOR_USER:-banking_coordinator_user}" \
   -d "${POSTGRES_COORDINATOR_DB:-banking_coordinator}" \
-  -c "SELECT transaction_id,state,decision FROM coordinated_transfers WHERE transaction_id='$TX_ID';"
-.venv/bin/python -m client balance --account-id 1
-.venv/bin/python -m client balance --account-id 1001
-$COMPOSE exec -T postgres-a psql -U "$POSTGRES_A_USER" -d "$POSTGRES_A_DB" \
+  -c "SELECT transaction_id, state, decision FROM coordinated_transfers WHERE transaction_id='$TX_ID';"
+```
+
+Verify balances and prepared transactions:
+
+```bash
+../.venv/bin/python -m client balance --account-id 1
+../.venv/bin/python -m client balance --account-id 1001
+
+$COMPOSE exec -T postgres-a \
+  psql -U "$POSTGRES_A_USER" -d "$POSTGRES_A_DB" \
   -c "SELECT gid FROM pg_prepared_xacts;"
-$COMPOSE exec -T postgres-b psql -U "$POSTGRES_B_USER" -d "$POSTGRES_B_DB" \
+
+$COMPOSE exec -T postgres-b \
+  psql -U "$POSTGRES_B_USER" -d "$POSTGRES_B_DB" \
   -c "SELECT gid FROM pg_prepared_xacts;"
 ```
 
-Expected: logs contain `Experiment fault: exiting after durable COMMIT`; the
-container restarts under Compose policy, startup recovery reuses `TX_ID`, the
-row becomes `COMMIT/RESOLVED`, balances change once, and both prepared-xact
-queries are empty. Capture the crash/restart logs, row, balances, and empty SQL
-results.
+**Expected:** Coordinator restarts, the transaction reaches `COMMIT/RESOLVED`, both balances change exactly once, and no prepared transactions remain.
 
-Cleanup disables the hook for later demonstrations:
+Disable fault injection afterward:
 
-```sh
+```bash
 unset COORDINATOR_EXPERIMENT_CRASH_AFTER_COMMIT_TRANSACTION_ID
-$COMPOSE up -d --force-recreate coordinator gateway
+$COMPOSE up -d --force-recreate coordinator
 ```
 
-## 7. Concurrent overlapping cross-shard transfers
+## 7. Concurrent Cross-Shard Transfers
 
-Objective: execute bounded unique transfers over the same source and
-destination, poll durable outcomes, and verify exact balances and conservation.
+Run 20 overlapping transfers with five concurrent workers:
 
-```sh
-.venv/bin/python scripts/cross_shard_experiment.py \
-  --source 1 --destination 1001 --transfers 20 --amount 1 \
-  --concurrency 5 --timeout 30 | tee /tmp/cross-shard-experiment.json
-$COMPOSE exec -T postgres-coordinator psql -U "${POSTGRES_COORDINATOR_USER:-banking_coordinator_user}" \
+```bash
+../.venv/bin/python scripts/cross_shard_experiment.py \
+  --source 1 --destination 1001 \
+  --transfers 20 --amount 1 \
+  --concurrency 5 --timeout 30 \
+  | tee /tmp/cross-shard-experiment.json
+```
+
+Inspect Coordinator states:
+
+```bash
+$COMPOSE exec -T postgres-coordinator \
+  psql -U "${POSTGRES_COORDINATOR_USER:-banking_coordinator_user}" \
   -d "${POSTGRES_COORDINATOR_DB:-banking_coordinator}" \
-  -c "SELECT state,decision,count(*) FROM coordinated_transfers GROUP BY state,decision;"
-$COMPOSE exec -T postgres-a psql -U "$POSTGRES_A_USER" -d "$POSTGRES_A_DB" \
+  -c "SELECT state, decision, count(*) FROM coordinated_transfers GROUP BY state, decision;"
+```
+
+Verify no unresolved prepared transactions remain:
+
+```bash
+$COMPOSE exec -T postgres-a \
+  psql -U "$POSTGRES_A_USER" -d "$POSTGRES_A_DB" \
   -c "SELECT gid FROM pg_prepared_xacts;"
-$COMPOSE exec -T postgres-b psql -U "$POSTGRES_B_USER" -d "$POSTGRES_B_DB" \
+
+$COMPOSE exec -T postgres-b \
+  psql -U "$POSTGRES_B_USER" -d "$POSTGRES_B_DB" \
   -c "SELECT gid FROM pg_prepared_xacts;"
 ```
 
-Expected: script result is `PASS`, every listed UUID is `SUCCEEDED`, source
-and destination deltas are equal and opposite, relevant coordinator rows are
-resolved COMMITs, and both prepared-xact queries are empty. Capture the JSON
-summary and SQL evidence.
+**Expected:** The script reports `PASS`, all 20 transactions succeed, balances change by equal and opposite amounts, and no prepared transactions remain.
+
+Capture the JSON summary and SQL results for the technical report and demo video.
