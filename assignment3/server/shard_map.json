@@ -1,0 +1,16 @@
+{
+  "account_prefix": "A",
+  "account_digits": 4,
+  "shards": {
+    "A": {
+      "minimum_account_id": 1,
+      "maximum_account_id": 1000,
+      "database_service": "postgres-a"
+    },
+    "B": {
+      "minimum_account_id": 1001,
+      "maximum_account_id": 2000,
+      "database_service": "postgres-b"
+    }
+  }
+}
