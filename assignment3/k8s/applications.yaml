@@ -1,0 +1,244 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      containers:
+        - name: gateway
+          image: matinhosseinii/banking-gateway:assignment2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: banking-config
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+spec:
+  type: NodePort
+  selector:
+    app: gateway
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      nodePort: 30080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coordinator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: coordinator
+  template:
+    metadata:
+      labels:
+        app: coordinator
+    spec:
+      containers:
+        - name: coordinator
+          image: matinhosseinii/banking-coordinator:assignment2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: banking-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: banking-secrets
+                  key: COORDINATOR_DATABASE_URL
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coordinator
+spec:
+  type: ClusterIP
+  selector:
+    app: coordinator
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bank-a
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bank-a
+  template:
+    metadata:
+      labels:
+        app: bank-a
+        shard: a
+    spec:
+      containers:
+        - name: bank
+          image: matinhosseinii/banking-server:assignment2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: banking-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: banking-secrets
+                  key: BANK_A_DATABASE_URL
+            - name: SHARD_ID
+              value: "A"
+            - name: REPLICA_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bank-a
+spec:
+  type: ClusterIP
+  selector:
+    app: bank-a
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bank-b
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bank-b
+  template:
+    metadata:
+      labels:
+        app: bank-b
+        shard: b
+    spec:
+      containers:
+        - name: bank
+          image: matinhosseinii/banking-server:assignment2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: banking-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: banking-secrets
+                  key: BANK_B_DATABASE_URL
+            - name: SHARD_ID
+              value: "B"
+            - name: REPLICA_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bank-b
+spec:
+  type: ClusterIP
+  selector:
+    app: bank-b
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
