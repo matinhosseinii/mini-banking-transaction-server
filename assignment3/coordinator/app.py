@@ -44,6 +44,14 @@ def _problem(status_code: int, detail: str, **extra: object) -> JSONResponse:
     )
 
 
+async def _recover_once(coordinator: Coordinator) -> None:
+    """Run one recovery cycle without terminating future cycles on DB failure."""
+    try:
+        await asyncio.to_thread(coordinator.recover)
+    except Exception:
+        logger.warning("Coordinator recovery cycle failed", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     settings = Settings.from_environment()
@@ -74,10 +82,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
     async def recovery_loop() -> None:
         while True:
-            await asyncio.to_thread(coordinator.recover)
+            await _recover_once(coordinator)
             await asyncio.sleep(settings.recovery_interval_seconds)
 
-    await asyncio.to_thread(coordinator.recover)
+    await _recover_once(coordinator)
     task = asyncio.create_task(recovery_loop())
     try:
         yield

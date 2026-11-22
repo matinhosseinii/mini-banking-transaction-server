@@ -153,6 +153,11 @@ authentication behavior.
   failure is returned to the client rather than blindly replayed against another Pod.
   Coordinator 2PC actions also make one Service request per recovery attempt; later
   durable recovery attempts reuse the same transaction ID.
+- Banking and Coordinator SQLAlchemy engines validate pooled connections before
+  checkout. This discards connections made stale by a Primary change but does not
+  retry an in-flight or ambiguously committed transaction. Coordinator recovery logs
+  a failed database cycle and continues with the original transaction IDs on later
+  cycles after the Primary Service becomes available again.
 - Only readiness probes are configured. They retain the existing `/ready` database
   and downstream-health semantics. Liveness probes are intentionally omitted so a
   temporary database or routing outage cannot trigger restart loops.
