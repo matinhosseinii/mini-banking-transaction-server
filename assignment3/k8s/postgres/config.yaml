@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: patroni-config
+data:
+  patroni.yml: |
+    kubernetes:
+      use_endpoints: false
+      scope_label: cluster-name
+      role_label: role
+      leader_label_value: primary
+      follower_label_value: replica
+      labels:
+        application: patroni
+
+    restapi:
+      listen: 0.0.0.0:8008
+
+    bootstrap:
+      dcs:
+        ttl: 30
+        loop_wait: 10
+        retry_timeout: 10
+        maximum_lag_on_failover: 0
+        check_timeline: true
+        failsafe_mode: true
+        synchronous_mode: true
+        synchronous_mode_strict: true
+        synchronous_node_count: 1
+        postgresql:
+          use_pg_rewind: true
+          use_slots: true
+          parameters:
+            wal_level: replica
+            hot_standby: "on"
+            max_wal_senders: 10
+            max_replication_slots: 10
+            wal_keep_size: 128MB
+            max_prepared_transactions: 20
+            synchronous_commit: "on"
+      initdb:
+        - encoding: UTF8
+        - data-checksums
+      pg_hba:
+        - host replication replicator 0.0.0.0/0 scram-sha-256
+        - host all all 0.0.0.0/0 scram-sha-256
+      post_init: /etc/patroni/post-init.sh
+
+    postgresql:
+      listen: 0.0.0.0:5432
+      data_dir: /var/lib/postgresql/data/pgdata
+      pgpass: /tmp/pgpass
+      authentication:
+        superuser:
+          username: postgres
+        replication:
+          username: replicator
+
+  post-init.sh: |
+    #!/bin/sh
+    set -eu
+    psql "$1" -v ON_ERROR_STOP=1 \
+      --set=app_database="$APP_DATABASE" \
+      --set=app_username="$APP_USERNAME" \
+      --set=app_password="$APP_PASSWORD" <<'SQL'
+    CREATE ROLE :"app_username" LOGIN PASSWORD :'app_password';
+    CREATE DATABASE :"app_database" OWNER :"app_username";
+    SQL

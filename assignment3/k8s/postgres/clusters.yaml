@@ -1,0 +1,404 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-a
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    application: patroni
+    cluster-name: postgres-a
+  ports:
+    - name: postgres
+      port: 5432
+    - name: patroni
+      port: 8008
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-a-primary
+spec:
+  type: ClusterIP
+  selector:
+    application: patroni
+    cluster-name: postgres-a
+    role: primary
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-a
+spec:
+  serviceName: postgres-a
+  replicas: 2
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      application: patroni
+      cluster-name: postgres-a
+  template:
+    metadata:
+      labels:
+        application: patroni
+        cluster-name: postgres-a
+    spec:
+      serviceAccountName: patroni
+      securityContext:
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: postgres
+          image: banking-postgres-patroni:assignment3
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+            - name: patroni
+              containerPort: 8008
+          env:
+            - name: PATRONI_SCOPE
+              value: postgres-a
+            - name: PATRONI_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: PATRONI_KUBERNETES_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: PATRONI_RESTAPI_CONNECT_ADDRESS
+              value: "$(POD_IP):8008"
+            - name: PATRONI_POSTGRESQL_CONNECT_ADDRESS
+              value: "$(POD_IP):5432"
+            - name: PATRONI_SUPERUSER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: banking-secrets
+                  key: POSTGRES_SUPERUSER_PASSWORD
+            - name: PATRONI_REPLICATION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: banking-secrets
+                  key: POSTGRES_REPLICATION_PASSWORD
+            - name: APP_DATABASE
+              value: banking_a
+            - name: APP_USERNAME
+              value: banking_a_user
+            - name: APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: banking-secrets
+                  key: BANK_A_PASSWORD
+          readinessProbe:
+            httpGet:
+              path: /readiness
+              port: patroni
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: patroni-config
+              mountPath: /etc/patroni
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: patroni-config
+          configMap:
+            name: patroni-config
+            defaultMode: 0555
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-b
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    application: patroni
+    cluster-name: postgres-b
+  ports:
+    - name: postgres
+      port: 5432
+    - name: patroni
+      port: 8008
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-b-primary
+spec:
+  type: ClusterIP
+  selector:
+    application: patroni
+    cluster-name: postgres-b
+    role: primary
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-b
+spec:
+  serviceName: postgres-b
+  replicas: 2
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      application: patroni
+      cluster-name: postgres-b
+  template:
+    metadata:
+      labels:
+        application: patroni
+        cluster-name: postgres-b
+    spec:
+      serviceAccountName: patroni
+      securityContext:
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: postgres
+          image: banking-postgres-patroni:assignment3
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+            - name: patroni
+              containerPort: 8008
+          env:
+            - name: PATRONI_SCOPE
+              value: postgres-b
+            - name: PATRONI_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: PATRONI_KUBERNETES_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: PATRONI_RESTAPI_CONNECT_ADDRESS
+              value: "$(POD_IP):8008"
+            - name: PATRONI_POSTGRESQL_CONNECT_ADDRESS
+              value: "$(POD_IP):5432"
+            - name: PATRONI_SUPERUSER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: banking-secrets
+                  key: POSTGRES_SUPERUSER_PASSWORD
+            - name: PATRONI_REPLICATION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: banking-secrets
+                  key: POSTGRES_REPLICATION_PASSWORD
+            - name: APP_DATABASE
+              value: banking_b
+            - name: APP_USERNAME
+              value: banking_b_user
+            - name: APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: banking-secrets
+                  key: BANK_B_PASSWORD
+          readinessProbe:
+            httpGet:
+              path: /readiness
+              port: patroni
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: patroni-config
+              mountPath: /etc/patroni
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: patroni-config
+          configMap:
+            name: patroni-config
+            defaultMode: 0555
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-coordinator
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    application: patroni
+    cluster-name: postgres-coordinator
+  ports:
+    - name: postgres
+      port: 5432
+    - name: patroni
+      port: 8008
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-coordinator-primary
+spec:
+  type: ClusterIP
+  selector:
+    application: patroni
+    cluster-name: postgres-coordinator
+    role: primary
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-coordinator
+spec:
+  serviceName: postgres-coordinator
+  replicas: 2
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      application: patroni
+      cluster-name: postgres-coordinator
+  template:
+    metadata:
+      labels:
+        application: patroni
+        cluster-name: postgres-coordinator
+    spec:
+      serviceAccountName: patroni
+      securityContext:
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: postgres
+          image: banking-postgres-patroni:assignment3
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+            - name: patroni
+              containerPort: 8008
+          env:
+            - name: PATRONI_SCOPE
+              value: postgres-coordinator
+            - name: PATRONI_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: PATRONI_KUBERNETES_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: PATRONI_RESTAPI_CONNECT_ADDRESS
+              value: "$(POD_IP):8008"
+            - name: PATRONI_POSTGRESQL_CONNECT_ADDRESS
+              value: "$(POD_IP):5432"
+            - name: PATRONI_SUPERUSER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: banking-secrets
+                  key: POSTGRES_SUPERUSER_PASSWORD
+            - name: PATRONI_REPLICATION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: banking-secrets
+                  key: POSTGRES_REPLICATION_PASSWORD
+            - name: APP_DATABASE
+              value: banking_coordinator
+            - name: APP_USERNAME
+              value: banking_coordinator_user
+            - name: APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: banking-secrets
+                  key: COORDINATOR_PASSWORD
+          readinessProbe:
+            httpGet:
+              path: /readiness
+              port: patroni
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: patroni-config
+              mountPath: /etc/patroni
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: patroni-config
+          configMap:
+            name: patroni-config
+            defaultMode: 0555
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
