@@ -144,15 +144,15 @@ authentication behavior.
   retains Endpoint permissions, but leader election no longer depends on Endpoints.
   The exact API-server rejection was not available offline, so this change addresses
   the failing DCS path without claiming a proven Kubernetes root cause.
-- The Gateway and Coordinator still require the fixed `BANK_A1_URL`, `BANK_A2_URL`,
-  `BANK_B1_URL`, and `BANK_B2_URL` configuration inherited from Assignment 2. A
-  Deployment plus one shard Service cannot give those names independent pod identity
-  or health-aware replica routing. The ConfigMap therefore reserves the future DNS
-  names `bank-a1`, `bank-a2`, `bank-b1`, and `bank-b2`, but this commit deliberately
-  does not create misleading Services for them. Requests and Gateway readiness will
-  not work until the planned application compatibility/discovery change is complete.
-- The `bank-a` and `bank-b` ClusterIP Services provide ordinary load-balanced access
-  to each shard but are not used as substitutes for the four fixed replica endpoints.
+- The Gateway and Coordinator use one logical URL per shard: `http://bank-a:8000` and
+  `http://bank-b:8000`. The ClusterIP Services distribute new connections across
+  Ready Banking Pods; HTTP connection reuse means requests are not guaranteed to be
+  evenly distributed. The applications do not model repeated calls to one Service as
+  independent replica failover.
+- Gateway forwarding remains single-attempt, including for mutations. A transport
+  failure is returned to the client rather than blindly replayed against another Pod.
+  Coordinator 2PC actions also make one Service request per recovery attempt; later
+  durable recovery attempts reuse the same transaction ID.
 - Only readiness probes are configured. They retain the existing `/ready` database
   and downstream-health semantics. Liveness probes are intentionally omitted so a
   temporary database or routing outage cannot trigger restart loops.

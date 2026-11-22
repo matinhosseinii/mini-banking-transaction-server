@@ -10,7 +10,7 @@ The platform runs in **9 Docker containers**:
 
 | Component | Description |
 |---|---|
-| Gateway | Shard-aware routing, round-robin load balancing, health-aware failover |
+| Gateway | Shard-aware routing through logical shard Service endpoints |
 | Shard A | Accounts `A0001–A1000`, two Banking replicas, PostgreSQL A |
 | Shard B | Accounts `A1001–A2000`, two Banking replicas, PostgreSQL B |
 | Coordinator | Durable 2PC decisions and crash recovery |
@@ -27,7 +27,7 @@ All Assignment 1 banking functionality is preserved, including account creation,
 - **Same-shard transfers:** Atomic PostgreSQL transactions with deterministic row locking.
 - **Cross-shard transfers:** Durable 2PC using PostgreSQL prepared transactions.
 - **Concurrency:** Row-level locks and advisory locks prevent lost updates and duplicate effects.
-- **Availability:** The Gateway routes requests to healthy replicas.
+- **Availability:** the platform balances each logical shard endpoint across healthy replicas.
 - **Recovery:** The Coordinator persists COMMIT/ABORT decisions and resolves interrupted transactions after restart.
 
 Uncertain transaction outcomes remain queryable by request UUID.

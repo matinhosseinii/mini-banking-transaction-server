@@ -1,4 +1,4 @@
-"""FastAPI Gateway for shard routing, health checks, and replica failover."""
+"""FastAPI Gateway for shard routing through logical Service endpoints."""
 
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ async def ready(request: Request) -> Response:
     snapshot = await request.app.state.pool.snapshot()
     ready_shards = all(any(replicas.values()) for replicas in snapshot.values())
     if not ready_shards:
-        return problem(503, "No healthy replica is available for every shard.")
+        return problem(503, "No healthy Service endpoint is available for every shard.")
     return JSONResponse({"status": "ready"})
 
 
@@ -202,7 +202,7 @@ async def _forward(
     try:
         replica = await request.app.state.pool.select(shard_id)
     except NoHealthyReplica:
-        return problem(503, f"No healthy replica is available for shard {shard_id}.")
+        return problem(503, f"No healthy Service endpoint is available for shard {shard_id}.")
     return await _send(request, replica, params=params)
 
 
@@ -225,11 +225,10 @@ async def _send(
             },
         )
     except httpx.RequestError:
-        await request.app.state.pool.set_health(replica.replica_id, False)
         _log_selection(request, replica, 502)
         return problem(
             502,
-            "The selected replica did not complete the request; the Gateway did not retry it.",
+            "The shard Service did not complete the request; the Gateway did not retry it.",
         )
     _log_selection(request, replica, backend.status_code)
     return Response(
@@ -368,7 +367,7 @@ def _log_selection(request: Request, replica: ReplicaConfig, status_code: int) -
         extra={
             "event": "gateway_request_completed",
             "shard_id": replica.shard_id,
-            "replica_id": replica.replica_id,
+            "shard_endpoint_id": replica.replica_id,
             "method": request.method,
             "path": request.url.path,
             "status_code": status_code,

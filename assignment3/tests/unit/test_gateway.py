@@ -1,4 +1,4 @@
-"""Focused Gateway routing, round-robin, and failover tests."""
+"""Focused Gateway shard Service routing and health tests."""
 
 from __future__ import annotations
 
@@ -15,10 +15,8 @@ from gateway.config import ReplicaConfig
 from gateway.replicas import NoHealthyReplica, ReplicaPool
 
 REPLICAS = (
-    ReplicaConfig("a1", "A", "http://a1"),
-    ReplicaConfig("a2", "A", "http://a2"),
-    ReplicaConfig("b1", "B", "http://b1"),
-    ReplicaConfig("b2", "B", "http://b2"),
+    ReplicaConfig("bank-a", "A", "http://bank-a"),
+    ReplicaConfig("bank-b", "B", "http://bank-b"),
 )
 
 
@@ -26,39 +24,38 @@ def run(coroutine):
     return asyncio.run(coroutine)
 
 
-def test_round_robin_is_independent_and_never_crosses_shards() -> None:
+def test_each_shard_selects_its_logical_service_endpoint() -> None:
     async def scenario() -> None:
         pool = ReplicaPool(REPLICAS)
         for replica in REPLICAS:
             await pool.set_health(replica.replica_id, True)
 
-        assert [(await pool.select("A")).replica_id for _ in range(4)] == [
-            "a1",
-            "a2",
-            "a1",
-            "a2",
+        assert [(await pool.select("A")).replica_id for _ in range(2)] == [
+            "bank-a",
+            "bank-a",
         ]
-        assert [(await pool.select("B")).replica_id for _ in range(4)] == [
-            "b1",
-            "b2",
-            "b1",
-            "b2",
+        assert [(await pool.select("B")).replica_id for _ in range(2)] == [
+            "bank-b",
+            "bank-b",
         ]
 
     run(scenario())
 
 
-def test_failed_replica_is_skipped_and_recovered_replica_rejoins() -> None:
+def test_unhealthy_service_endpoint_recovers() -> None:
     async def scenario() -> None:
         pool = ReplicaPool(REPLICAS)
-        await pool.set_health("a1", True)
-        await pool.set_health("a2", False)
-        assert (await pool.select("A")).replica_id == "a1"
-        assert (await pool.select("A")).replica_id == "a1"
-
-        await pool.set_health("a2", True)
-        assert (await pool.select("A")).replica_id == "a2"
-        assert (await pool.select("A")).replica_id == "a1"
+        await pool.set_health("bank-a", True)
+        assert (await pool.select("A")).replica_id == "bank-a"
+        await pool.set_health("bank-a", False)
+        try:
+            await pool.select("A")
+        except NoHealthyReplica:
+            pass
+        else:
+            raise AssertionError("unhealthy Service endpoint was selected")
+        await pool.set_health("bank-a", True)
+        assert (await pool.select("A")).replica_id == "bank-a"
 
     run(scenario())
 
@@ -82,7 +79,7 @@ def test_forward_returns_503_when_shard_has_no_healthy_replica() -> None:
         request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(pool=pool)))
         response = await gateway_app._forward(request, "B")
         assert response.status_code == 503
-        assert b"No healthy replica is available for shard B" in response.body
+        assert b"No healthy Service endpoint is available for shard B" in response.body
 
     run(scenario())
 
@@ -109,19 +106,19 @@ def test_creation_policy_is_deterministic_and_uses_both_shards() -> None:
     assert decisions == [gateway_app._creation_shard(value) for value in identifiers]
 
 
-def test_forwarding_failure_is_not_retried_and_marks_replica_unhealthy() -> None:
+def test_forwarding_failure_is_not_retried_or_applied_to_whole_service() -> None:
     class FailingClient:
         def __init__(self) -> None:
             self.calls = 0
 
         async def request(self, *args, **kwargs):
             self.calls += 1
-            request = httpx.Request("POST", "http://a1/accounts/1/deposit")
+            request = httpx.Request("POST", "http://bank-a/accounts/1/deposit")
             raise httpx.ConnectError("failed", request=request)
 
     async def scenario() -> None:
         pool = ReplicaPool(REPLICAS)
-        await pool.set_health("a1", True)
+        await pool.set_health("bank-a", True)
         client = FailingClient()
         app = SimpleNamespace(state=SimpleNamespace(pool=pool, client=client))
         sent = False
@@ -148,7 +145,7 @@ def test_forwarding_failure_is_not_retried_and_marks_replica_unhealthy() -> None
 
         assert response.status_code == 502
         assert client.calls == 1
-        assert (await pool.snapshot())["A"]["a1"] is False
+        assert (await pool.snapshot())["A"]["bank-a"] is True
 
     run(scenario())
 

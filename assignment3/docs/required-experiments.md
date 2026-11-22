@@ -44,13 +44,15 @@ for unused in $(seq 1 20); do
   curl -fsS http://127.0.0.1:8000/accounts/1/balance >/dev/null
 done
 
-$COMPOSE logs --since 2m gateway > /tmp/gateway-round-robin.log
+$COMPOSE logs --since 2m bank-a1 bank-a2 > /tmp/bank-a-distribution.log
 
-grep -c '"replica_id":"bank-a1"' /tmp/gateway-round-robin.log
-grep -c '"replica_id":"bank-a2"' /tmp/gateway-round-robin.log
+grep -c 'bank-a1' /tmp/bank-a-distribution.log
+grep -c 'bank-a2' /tmp/bank-a-distribution.log
 ```
 
-**Expected:** Both replicas receive requests, normally close to 10 each. Counts may include other requests in the log window.
+**Expected:** The logical `bank-a` endpoint distributes requests to both replicas.
+Counts may include health checks and other requests in the log window; exact balancing
+is not guaranteed.
 
 ## 3. Concurrent Operations Through Two Replicas
 

@@ -11,9 +11,5 @@ data:
   COORDINATOR_RECOVERY_INTERVAL_SECONDS: "5"
   COORDINATOR_EXPERIMENT_CRASH_AFTER_COMMIT_TRANSACTION_ID: ""
   COORDINATOR_URL: "http://coordinator:8000"
-  # These fixed replica endpoints are intentionally not Services in this commit.
-  # A later application-compatibility change must provide honest pod discovery.
-  BANK_A1_URL: "http://bank-a1:8000"
-  BANK_A2_URL: "http://bank-a2:8000"
-  BANK_B1_URL: "http://bank-b1:8000"
-  BANK_B2_URL: "http://bank-b2:8000"
+  BANK_A_URL: "http://bank-a:8000"
+  BANK_B_URL: "http://bank-b:8000"

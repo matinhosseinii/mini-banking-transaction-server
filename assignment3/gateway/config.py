@@ -33,10 +33,8 @@ class GatewaySettings:
         replicas = tuple(
             ReplicaConfig(replica_id, shard_id, _url(values, variable))
             for replica_id, shard_id, variable in (
-                ("bank-a1", "A", "BANK_A1_URL"),
-                ("bank-a2", "A", "BANK_A2_URL"),
-                ("bank-b1", "B", "BANK_B1_URL"),
-                ("bank-b2", "B", "BANK_B2_URL"),
+                ("bank-a", "A", "BANK_A_URL"),
+                ("bank-b", "B", "BANK_B_URL"),
             )
         )
         return cls(

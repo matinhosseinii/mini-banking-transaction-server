@@ -62,7 +62,7 @@ class Participants:
         self.block_destination_commit = False
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
-        shard = "A" if request.url.host.startswith("a") else "B"
+        shard = "A" if request.url.host == "bank-a" else "B"
         transaction_id = request.url.path.rsplit("/", 1)[-1]
         if request.method == "POST":
             body = json.loads(request.content)
@@ -110,7 +110,7 @@ def _coordinator(
     client = httpx.Client(transport=httpx.MockTransport(participants))
     return Coordinator(
         engine,
-        {"A": ("http://a1", "http://a2"), "B": ("http://b1", "http://b2")},
+        {"A": "http://bank-a", "B": "http://bank-b"},
         client,
         after_commit_hook=after_commit_hook,
     )

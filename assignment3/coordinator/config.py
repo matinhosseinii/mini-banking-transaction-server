@@ -10,7 +10,7 @@ from uuid import UUID
 @dataclass(frozen=True, slots=True)
 class Settings:
     database_url: str
-    shard_urls: dict[str, tuple[str, ...]]
+    shard_urls: dict[str, str]
     recovery_interval_seconds: float
     crash_after_commit_transaction_id: UUID | None
 
@@ -20,8 +20,8 @@ class Settings:
         return cls(
             database_url=database_url,
             shard_urls={
-                "A": (_url("BANK_A1_URL"), _url("BANK_A2_URL")),
-                "B": (_url("BANK_B1_URL"), _url("BANK_B2_URL")),
+                "A": _url("BANK_A_URL"),
+                "B": _url("BANK_B_URL"),
             },
             recovery_interval_seconds=float(
                 os.environ.get("COORDINATOR_RECOVERY_INTERVAL_SECONDS", "5")

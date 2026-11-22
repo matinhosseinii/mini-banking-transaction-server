@@ -1,4 +1,4 @@
-"""In-memory per-shard replica health and round-robin selection."""
+"""In-memory health state for logical shard Service endpoints."""
 
 from __future__ import annotations
 
@@ -15,11 +15,11 @@ class ReplicaState:
 
 
 class NoHealthyReplica(RuntimeError):
-    """Raised when the requested shard has no usable application replica."""
+    """Raised when the requested shard has no usable Service endpoint."""
 
 
 class ReplicaPool:
-    """Maintain health and independent round-robin cursors per shard."""
+    """Maintain health for the configured endpoint of each shard."""
 
     def __init__(self, replicas: tuple[ReplicaConfig, ...]) -> None:
         self._replicas = {
@@ -34,7 +34,7 @@ class ReplicaPool:
         self._lock = asyncio.Lock()
 
     async def select(self, shard_id: str) -> ReplicaConfig:
-        """Select the next healthy replica in one shard only."""
+        """Select the healthy logical endpoint for one shard only."""
         async with self._lock:
             candidates = self._replicas.get(shard_id, [])
             if not candidates or not any(item.healthy for item in candidates):
@@ -48,7 +48,7 @@ class ReplicaPool:
         raise NoHealthyReplica(shard_id)
 
     async def set_health(self, replica_id: str, healthy: bool) -> None:
-        """Update one replica without disturbing round-robin state."""
+        """Update one logical endpoint without disturbing selection state."""
         async with self._lock:
             for candidates in self._replicas.values():
                 for item in candidates:

@@ -44,7 +44,7 @@ class Coordinator:
     def __init__(
         self,
         engine: Engine,
-        shard_urls: dict[str, tuple[str, ...]],
+        shard_urls: dict[str, str],
         client: httpx.Client,
         after_commit_hook: Callable[[UUID], None] | None = None,
     ) -> None:
@@ -236,31 +236,28 @@ class Coordinator:
 
     def _participant(self, shard: str, action: str, payload: dict) -> dict:
         last: dict = {"state": "UNKNOWN"}
-        for base_url in self.shard_urls[shard]:
-            try:
-                response = self.client.post(
-                    f"{base_url}/internal/2pc/{action}", json=payload
-                )
-            except httpx.RequestError:
-                continue
-            if response.status_code == 200:
-                document = response.json()
-                return document if isinstance(document, dict) else last
-            if response.status_code == 409:
-                status = self._participant_status(
-                    shard, UUID(payload["transaction_id"])
-                )
-                return status
+        base_url = self.shard_urls[shard]
+        try:
+            response = self.client.post(
+                f"{base_url}/internal/2pc/{action}", json=payload
+            )
+        except httpx.RequestError:
+            return last
+        if response.status_code == 200:
+            document = response.json()
+            return document if isinstance(document, dict) else last
+        if response.status_code == 409:
+            return self._participant_status(shard, UUID(payload["transaction_id"]))
         return last
 
     def _participant_status(self, shard: str, transaction_id: UUID) -> dict:
-        for base_url in self.shard_urls[shard]:
-            try:
-                response = self.client.get(f"{base_url}/internal/2pc/{transaction_id}")
-            except httpx.RequestError:
-                continue
-            if response.status_code == 200 and isinstance(response.json(), dict):
-                return response.json()
+        base_url = self.shard_urls[shard]
+        try:
+            response = self.client.get(f"{base_url}/internal/2pc/{transaction_id}")
+        except httpx.RequestError:
+            return {"state": "UNKNOWN"}
+        if response.status_code == 200 and isinstance(response.json(), dict):
+            return response.json()
         return {"state": "UNKNOWN"}
 
     def _register(
