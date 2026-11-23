@@ -13,6 +13,7 @@ Assignment 3:
 - `postgres/Dockerfile`: minimal PostgreSQL 17 + Patroni Kubernetes image.
 - `postgres/clusters.yaml`: three independent two-member PostgreSQL StatefulSets,
   headless Services, primary-only Services, and per-Pod volume claim templates.
+- `overlays/dockerhub/`: image-only overlay for the published Assignment 3 images.
 
 Each `postgres-a`, `postgres-b`, and `postgres-coordinator` StatefulSet runs one
 Patroni-elected Primary and one synchronous Standby. Patroni stores leader state in
@@ -21,15 +22,20 @@ Kubernetes ConfigMaps and labels the current leader `role=primary`; the correspo
 
 ## Images and configuration
 
-The manifests reuse the Assignment 2 images already named by
-`infra/standalone/compose.hub.yaml`:
+The original manifests use local Assignment 3 image names:
 
-- `matinhosseinii/banking-gateway:assignment2`
-- `matinhosseinii/banking-coordinator:assignment2`
-- `matinhosseinii/banking-server:assignment2`
+- `banking-gateway:assignment3`
+- `banking-coordinator:assignment3`
+- `banking-server:assignment3`
+- `banking-postgres-patroni:assignment3`
 
-Build and publish replacement images separately if these images are unavailable, then
-edit the three `image` fields. This commit does not build or push images.
+The Docker Hub overlay replaces those names with the published images without changing
+the original manifests:
+
+- `matinhosseinii/banking-gateway:assignment3`
+- `matinhosseinii/banking-coordinator:assignment3`
+- `matinhosseinii/banking-server:assignment3`
+- `matinhosseinii/banking-postgres-patroni:assignment3`
 
 The database StatefulSets use the local image
 `banking-postgres-patroni:assignment3`. Its Dockerfile extends
@@ -106,6 +112,46 @@ kubectl get deployments,pods,services
 ```
 
 The Gateway is exposed on NodePort `30080`; all other Services are ClusterIP-only.
+
+### Docker Hub deployment overlay
+
+The default file-by-file commands above use images built or loaded locally. The Docker
+Hub overlay reuses the same ConfigMaps, RBAC, Services, workloads, PVC templates, HPA,
+rolling-update settings, and NetworkPolicy, changing only the four image references.
+It intentionally does not include `secret.example.yaml`. Create `banking-secrets`
+from a private local file using the existing Secret workflow before deployment.
+
+Inspect the complete rendered resources without applying them:
+
+```sh
+kubectl kustomize --load-restrictor LoadRestrictionsNone \
+  assignment3/k8s/overlays/dockerhub
+```
+
+The load-restrictor option permits this nested overlay to reuse its parent manifests;
+it does not enable network access. After creating the Secret, deploy the rendered
+overlay when registry access is available:
+
+```sh
+kubectl kustomize --load-restrictor LoadRestrictionsNone \
+  assignment3/k8s/overlays/dockerhub | kubectl apply -f -
+```
+
+Verify the images configured on all seven workloads:
+
+```sh
+kubectl get deployment gateway coordinator bank-a bank-b \
+  -o custom-columns='KIND:.kind,NAME:.metadata.name,IMAGE:.spec.template.spec.containers[*].image'
+kubectl get statefulset postgres-a postgres-b postgres-coordinator \
+  -o custom-columns='KIND:.kind,NAME:.metadata.name,IMAGE:.spec.template.spec.containers[*].image'
+```
+
+Reproducible deployment requires the referenced tags to remain available, cluster
+access to Docker Hub (including any required registry credentials or proxy settings),
+a default `ReadWriteOnce` StorageClass, Metrics Server for HPA metrics, a
+NetworkPolicy-capable CNI for policy enforcement, and database migration and seed
+steps described below. For immutable production-style reproduction, pin published
+images by digest in a reviewed overlay rather than relying on mutable tags.
 
 ## Banking autoscaling
 

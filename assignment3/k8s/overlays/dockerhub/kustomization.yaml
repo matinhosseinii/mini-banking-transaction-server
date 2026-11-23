@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../configmap.yaml
+  - ../../postgres/rbac.yaml
+  - ../../postgres/config.yaml
+  - ../../postgres/clusters.yaml
+  - ../../applications.yaml
+  - ../../hpa.yaml
+  - ../../networkpolicy.yaml
+images:
+  - name: banking-gateway
+    newName: matinhosseinii/banking-gateway
+    newTag: assignment3
+  - name: banking-coordinator
+    newName: matinhosseinii/banking-coordinator
+    newTag: assignment3
+  - name: banking-server
+    newName: matinhosseinii/banking-server
+    newTag: assignment3
+  - name: banking-postgres-patroni
+    newName: matinhosseinii/banking-postgres-patroni
+    newTag: assignment3
