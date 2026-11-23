@@ -6,6 +6,7 @@ Assignment 3:
 - `configmap.yaml`: non-sensitive runtime settings and internal Service URLs.
 - `secret.example.yaml`: development-only template for database connection URLs.
 - `applications.yaml`: Gateway, Coordinator, and two bank shard Deployments and Services.
+- `hpa.yaml`: CPU-based autoscaling for the two Banking Deployments.
 - `postgres/rbac.yaml`: namespace-scoped Patroni ServiceAccount and RBAC.
 - `postgres/config.yaml`: shared Patroni bootstrap configuration and database init hook.
 - `postgres/Dockerfile`: minimal PostgreSQL 17 + Patroni Kubernetes image.
@@ -104,6 +105,33 @@ kubectl get deployments,pods,services
 ```
 
 The Gateway is exposed on NodePort `30080`; all other Services are ClusterIP-only.
+
+## Banking autoscaling
+
+The cluster must provide the Kubernetes resource metrics API, normally through Metrics
+Server. These manifests do not install or enable it. After Metrics Server and the
+Banking Deployments are available, apply and inspect the HPAs:
+
+```sh
+kubectl apply -f assignment3/k8s/hpa.yaml
+kubectl get hpa bank-a bank-b
+kubectl get hpa bank-a bank-b --watch
+```
+
+Observe replica changes and confirm that each shard Service includes newly Ready Pods:
+
+```sh
+kubectl get deployment bank-a bank-b --watch
+kubectl get pods -l app=bank-a --watch
+kubectl get pods -l app=bank-b --watch
+kubectl get endpointslice -l kubernetes.io/service-name=bank-a --watch
+kubectl get endpointslice -l kubernetes.io/service-name=bank-b --watch
+```
+
+Each HPA keeps at least two Banking Pods, permits up to four, and targets average CPU
+utilization of 70% relative to the existing `50m` container CPU request. Gateway and
+Coordinator continue using the stable `bank-a` and `bank-b` Service names, so no
+routing configuration changes when Pods are added or removed.
 
 Inspect roles and streaming state after deployment:
 
