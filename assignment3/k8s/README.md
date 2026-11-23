@@ -133,6 +133,61 @@ utilization of 70% relative to the existing `50m` container CPU request. Gateway
 Coordinator continue using the stable `bank-a` and `bank-b` Service names, so no
 routing configuration changes when Pods are added or removed.
 
+## Banking rolling updates and rollback
+
+The Banking Deployments use `maxUnavailable: 0` and `maxSurge: 1`. A replacement Pod
+must pass `/ready` before it receives Service traffic, and terminating Pods are removed
+from Service endpoints. Uvicorn handles SIGTERM and in-flight requests during the
+30-second Pod termination grace period; no custom drain or mutation retry is added.
+
+Runtime testing requires two Banking Server image versions that are already available
+to the cluster. Set the complete new image reference using the existing repository
+naming convention, then update both shards:
+
+```sh
+NEW_BANKING_IMAGE='matinhosseinii/banking-server:<available-new-tag>'
+kubectl set image deployment/bank-a bank="$NEW_BANKING_IMAGE"
+kubectl set image deployment/bank-b bank="$NEW_BANKING_IMAGE"
+kubectl rollout status deployment/bank-a
+kubectl rollout status deployment/bank-b
+```
+
+Watch readiness, rollout progress, and Service endpoint membership:
+
+```sh
+kubectl get deployment bank-a bank-b --watch
+kubectl get pods -l app=bank-a
+kubectl get pods -l app=bank-b
+kubectl get endpointslice -l kubernetes.io/service-name=bank-a
+kubectl get endpointslice -l kubernetes.io/service-name=bank-b
+```
+
+Rollback and verify the restored revision:
+
+```sh
+kubectl rollout undo deployment/bank-a
+kubectl rollout undo deployment/bank-b
+kubectl rollout status deployment/bank-a
+kubectl rollout status deployment/bank-b
+kubectl rollout history deployment/bank-a
+kubectl rollout history deployment/bank-b
+```
+
+Run normal balance, mutation, and cross-shard transfer commands during the rollout.
+Retain each reported request ID, then verify its result instead of issuing an unrelated
+replacement mutation after an ambiguous response:
+
+```sh
+REQUEST_ID='replace-with-request-uuid'
+ACCOUNT_ID='replace-with-account-id'
+(cd assignment3 && ../.venv/bin/python -m client pending recover)
+(cd assignment3 && ../.venv/bin/python -m client request get "$REQUEST_ID")
+(cd assignment3 && ../.venv/bin/python -m client balance --account-id "$ACCOUNT_ID")
+```
+
+HPA may change the desired replica count during a rollout, but the Deployment strategy
+still permits no unavailable Banking Pods and only one surge Pod per shard.
+
 Inspect roles and streaming state after deployment:
 
 ```sh

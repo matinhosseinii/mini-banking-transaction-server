@@ -117,6 +117,11 @@ metadata:
   name: bank-a
 spec:
   replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: bank-a
@@ -126,6 +131,7 @@ spec:
         app: bank-a
         shard: a
     spec:
+      terminationGracePeriodSeconds: 30
       containers:
         - name: bank
           image: matinhosseinii/banking-server:assignment2
@@ -183,6 +189,11 @@ metadata:
   name: bank-b
 spec:
   replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: bank-b
@@ -192,6 +203,7 @@ spec:
         app: bank-b
         shard: b
     spec:
+      terminationGracePeriodSeconds: 30
       containers:
         - name: bank
           image: matinhosseinii/banking-server:assignment2
