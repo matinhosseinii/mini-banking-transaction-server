@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: gateway
-          image: matinhosseinii/banking-gateway:assignment2
+          image: banking-gateway:assignment3
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -68,7 +68,7 @@ spec:
     spec:
       containers:
         - name: coordinator
-          image: matinhosseinii/banking-coordinator:assignment2
+          image: banking-coordinator:assignment3
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -134,7 +134,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: bank
-          image: matinhosseinii/banking-server:assignment2
+          image: banking-server:assignment3
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -206,7 +206,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: bank
-          image: matinhosseinii/banking-server:assignment2
+          image: banking-server:assignment3
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

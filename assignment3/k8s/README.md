@@ -7,6 +7,7 @@ Assignment 3:
 - `secret.example.yaml`: development-only template for database connection URLs.
 - `applications.yaml`: Gateway, Coordinator, and two bank shard Deployments and Services.
 - `hpa.yaml`: CPU-based autoscaling for the two Banking Deployments.
+- `networkpolicy.yaml`: Banking ingress allowed only from Gateway and Coordinator Pods.
 - `postgres/rbac.yaml`: namespace-scoped Patroni ServiceAccount and RBAC.
 - `postgres/config.yaml`: shared Patroni bootstrap configuration and database init hook.
 - `postgres/Dockerfile`: minimal PostgreSQL 17 + Patroni Kubernetes image.
@@ -187,6 +188,93 @@ ACCOUNT_ID='replace-with-account-id'
 
 HPA may change the desired replica count during a rollout, but the Deployment strategy
 still permits no unavailable Banking Pods and only one surge Pod per shard.
+
+## Banking ingress policy
+
+Apply the policy after the application resources:
+
+```sh
+kubectl apply -f assignment3/k8s/networkpolicy.yaml
+kubectl describe networkpolicy banking-ingress
+```
+
+The policy selects both Banking Deployments and permits TCP port 8000 only from Pods
+labelled `app=gateway` or `app=coordinator` in the same namespace. It defines no egress
+policy, so DNS and PostgreSQL access remain unrestricted. It does not restrict Patroni
+or PostgreSQL Pods.
+
+A NetworkPolicy object has no effect unless the cluster CNI enforces NetworkPolicy.
+Kindnet must not be assumed to enforce it merely because Kubernetes accepts the YAML.
+Verify behavior manually with the already deployed application images:
+
+```sh
+# Both permitted calls must return the Banking readiness response.
+kubectl exec deployment/gateway -- python -c \
+  "import urllib.request; print(urllib.request.urlopen('http://bank-a:8000/ready').status)"
+kubectl exec deployment/coordinator -- python -c \
+  "import urllib.request; print(urllib.request.urlopen('http://bank-b:8000/ready').status)"
+
+# This unrelated Pod must time out or be refused when policy enforcement is active.
+kubectl run networkpolicy-test --restart=Never \
+  --image=matinhosseinii/banking-server:assignment2 \
+  --labels=app=networkpolicy-test --command -- sleep 3600
+kubectl wait --for=condition=Ready pod/networkpolicy-test --timeout=60s
+kubectl exec networkpolicy-test -- python -c \
+  "import urllib.request; urllib.request.urlopen('http://bank-a:8000/ready', timeout=3)"
+kubectl delete pod networkpolicy-test
+```
+
+If the unrelated request succeeds, the CNI is not enforcing this policy; select and
+configure a NetworkPolicy-capable CNI manually before claiming isolation. The manifests
+do not install or change the CNI.
+
+## Minimal observability
+
+Use existing application logs and Kubernetes status:
+
+```sh
+kubectl logs deployment/gateway --tail=100
+kubectl logs -l app=bank-a --all-containers=true --prefix --tail=100
+kubectl logs -l app=bank-b --all-containers=true --prefix --tail=100
+kubectl logs deployment/coordinator --tail=200
+kubectl logs deployment/coordinator --since=30m | grep 'recovery'
+kubectl get pods -o wide
+kubectl get pods -L app,shard,role
+POD_NAME='replace-with-pod-name'
+kubectl describe pod "$POD_NAME"
+```
+
+Inspect Patroni membership, replication, and prepared transactions:
+
+```sh
+kubectl exec postgres-a-0 -- patronictl -c /etc/patroni/patroni.yml list
+PRIMARY_POD="$(kubectl get pods \
+  -l 'application=patroni,cluster-name=postgres-a,role=primary' \
+  -o jsonpath='{.items[0].metadata.name}')"
+kubectl exec "$PRIMARY_POD" -- psql -U postgres -d postgres -c \
+  "SELECT application_name, state, sync_state FROM pg_stat_replication;"
+kubectl exec "$PRIMARY_POD" -- psql -U postgres -d banking_a -c \
+  "SELECT gid, prepared, owner, database FROM pg_prepared_xacts;"
+```
+
+Repeat the database commands for the other cluster labels and database names. Resource
+metrics require Metrics Server:
+
+```sh
+kubectl top pods
+kubectl top pods -l app=bank-a
+kubectl top pods -l app=bank-b
+kubectl get hpa bank-a bank-b
+kubectl describe hpa bank-a
+kubectl describe hpa bank-b
+```
+
+Check a transaction outcome through the existing client/API using its original ID:
+
+```sh
+REQUEST_ID='replace-with-request-uuid'
+(cd assignment3 && ../.venv/bin/python -m client request get "$REQUEST_ID")
+```
 
 Inspect roles and streaming state after deployment:
 
